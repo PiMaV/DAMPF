@@ -26,10 +26,11 @@ def _serialize_value(
     """
     Fuer data-Tabelle. Returns (val, unit, raw_unit).
     Bei column_si_scale.get(key)==0: Konvertierung zu SI.
+    lengths (Liste von val+unit): nur Numeric in Spalte, Unit in Metadaten.
     """
     if v is None:
         return (None, "", "")
-    if is_quantitative_val(v) and key:
+    if key and (is_quantitative_val(v) or (isinstance(v, list) and v and is_quantitative_val(v[0]))):
         return get_export_value_and_metadata(v, key, column_si_scale)
     if is_quantitative_val(v):
         return (v.get("val"), v.get("unit", ""), v.get("unit", ""))
@@ -106,7 +107,10 @@ def write_index_to_sqlite(
             if v is None:
                 continue
             if isinstance(v, list) and v and isinstance(v[0], dict):
-                value_type = "list"
+                if is_quantitative_val(v[0]):
+                    _, unit_val, raw_unit_val = get_export_value_and_metadata(v, k, column_si_scale)
+                else:
+                    value_type = "list"
                 break
             if is_quantitative_val(v):
                 _, unit_val, raw_unit_val = get_export_value_and_metadata(v, k, column_si_scale)
@@ -189,6 +193,8 @@ def _sql_type_for_key(rows: List[Dict[str, Any]], key: str, use_extracted_val: b
             continue
         if use_extracted_val and is_quantitative_val(v):
             v = v.get("val")
+        elif use_extracted_val and isinstance(v, list) and v and is_quantitative_val(v[0]):
+            v = v[0].get("val")
         if isinstance(v, (list, dict)):
             has_other = True
         elif isinstance(v, bool):

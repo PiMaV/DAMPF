@@ -1,22 +1,26 @@
 # indexer.py - Config-driven semantic indexer (used by CLI and GUI).
-# Naming conventions and recognized patterns: see Proper_file_naming.md.
+# Naming conventions and recognized patterns: see Proper_file_naming_EN.md or Naming_Cheat_Sheet.md.
 
 from __future__ import annotations
 
 import csv
 import json
 import math
+import os
 import re
+import time
+from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from key_lut import GAS_KEYS, extract_val_for_export, format_val_unit, is_quantitative_val, unit_scale
 
 # Default config (overridable via run_indexer config)
 DEFAULT_ALLOWED_SUFFIXES = {
     ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp",
-    ".csv", ".tsv", ".txt",
+    ".csv", ".tsv", ".txt", ".dat", ".asc",
     ".npy", ".npz",
     ".h5", ".hdf5",
     ".json", ".yaml", ".yml",
@@ -49,6 +53,7 @@ PROC_TAGS = {
 RE_DATE_ISO = re.compile(r"^(?P<y>20\d{2})[-_\.]?(?P<m>\d{2})[-_\.]?(?P<d>\d{2})$")
 RE_DATE_ISO_DASH = re.compile(r"^(?P<y>20\d{2})-(?P<m>\d{2})-(?P<d>\d{2})$")
 RE_DATE_COMPACT = re.compile(r"^(?P<y>20\d{2})(?P<m>\d{2})(?P<d>\d{2})$")
+RE_DATE_EU = re.compile(r"^(?P<d>\d{1,2})[-\.](?P<m>\d{1,2})[-\.](?P<y>20\d{2})$")
 RE_RUN = re.compile(r"^(?:run|r)(?P<n>\d{1,4})$")
 RE_REP = re.compile(r"^(?:rep|repeat|repetition)(?P<n>\d{1,4})$")
 RE_TRIAL = re.compile(r"^(?:trial|tr)(?P<n>\d{1,4})$")
@@ -64,7 +69,10 @@ RE_TEMP = re.compile(r"^(?:(?:t|temp|temperature)(?:=)?)?(?P<val>[-+]?\d+(?:[p.]
 RE_FREQ = re.compile(r"^(?:(?:f|freq|frequency)(?:=)?)?(?P<val>" + _VAL + r")(?P<unit>hz|khz|mhz|ghz)$")
 RE_VOLT = re.compile(r"^(?:(?:u|v|volt|voltage)(?:=)?)?(?P<val>" + _VAL + r")(?P<unit>uv|mv|v|kv)$")
 RE_CURR = re.compile(r"^(?:(?:i|a|amp|current)(?:=)?)?(?P<val>" + _VAL + r")(?P<unit>ua|ma|a)$")
-RE_LEN = re.compile(r"^(?:x|y|z|d|dist|distance|px|um|µm|mm|nm)?(?P<val>[-+]?\d+(?:[p.]\d+)?)(?P<unit>nm|um|µm|mm|cm|m|px)$")
+RE_LEN = re.compile(
+    r"^(?:x|y|z|d|dist|distance|meas|measurement|px|um|µm|mm|nm)?"
+    r"(?P<val>[-+]?\d+(?:[p.]\d+)?)(?P<unit>nm|um|µm|mm|cm|m|px)$"
+)
 RE_KV = re.compile(r"^(?P<k>[a-zA-Z][a-zA-Z0-9]{0,16})=(?P<v>.+)$")
 
 # One token = number (optional p decimal) + unit; keep as single token so parser sees e.g. 4p2kv, 500us
@@ -105,6 +113,8 @@ def tokenize_string(s: str, stopwords: Optional[set] = None) -> List[str]:
     s = s.strip()
     if not s:
         return []
+    # Normalize decimal dot to p (e.g. 4.2kv -> 4p2kv) before split, since . is a delimiter
+    s = re.sub(r"(\d)\.(\d)", r"\1p\2", s)
     s = re.sub(r"[\/\\\-\_\.\+\(\)\[\]\{\},;]+", " ", s)
     raw = [p for p in s.split() if p]
     out: List[str] = []
@@ -207,7 +217,12 @@ def parse_tokens(tokens: List[str], modality_map: Optional[Dict[str, str]] = Non
     for tok in tokens:
         if not tok:
             continue
-        m = RE_DATE_ISO_DASH.match(tok) or RE_DATE_ISO.match(tok) or RE_DATE_COMPACT.match(tok)
+        m = (
+            RE_DATE_ISO_DASH.match(tok)
+            or RE_DATE_ISO.match(tok)
+            or RE_DATE_COMPACT.match(tok)
+            or RE_DATE_EU.match(tok)
+        )
         if m and "date" not in data:
             y, mo, d = int(m.group("y")), int(m.group("m")), int(m.group("d"))
             if 1 <= mo <= 12 and 1 <= d <= 31:
@@ -351,6 +366,32 @@ def parse_tokens(tokens: List[str], modality_map: Optional[Dict[str, str]] = Non
     return ParseResult(data=data, trace=trace, recognized=recognized, total_tokens=total, token_to_key=token_to_key)
 
 
+def detect_dominant_suffix(
+    root: Path,
+    allowed_suffixes: Optional[set] = None,
+    recursive: bool = True,
+    include_hidden: bool = False,
+) -> Optional[str]:
+    """
+    Quick scan of root + subfolders; return the most frequent file extension.
+    Used for majority-vote: focus on the dominant file type.
+    """
+    allowed_suffixes = allowed_suffixes or DEFAULT_ALLOWED_SUFFIXES
+    candidates = root.rglob("*") if recursive else root.glob("*")
+    counts: Counter[str] = Counter()
+    for p in candidates:
+        if not p.is_file():
+            continue
+        if not include_hidden and (is_hidden(p) or any(is_hidden(x) for x in p.parents)):
+            continue
+        ext = p.suffix.lower()
+        if ext in allowed_suffixes:
+            counts[ext] += 1
+    if not counts:
+        return None
+    return counts.most_common(1)[0][0]
+
+
 def iter_files(
     root: Path,
     allowed_suffixes: Optional[set] = None,
@@ -449,6 +490,43 @@ def suggest_categorical_keys(
     return out
 
 
+# Min. files to use multicore (below: process spawn overhead > gain)
+_PARALLEL_THRESHOLD = 100
+
+
+def _index_single_file(
+    args: Tuple[Path, Path, int, frozenset, Dict[str, str]]
+) -> Dict[str, Any]:
+    """Worker for ProcessPoolExecutor: index one file. Top-level for picklability."""
+    p, root, folder_depth, stopwords, modality_map = args
+    folder_tokens, file_tokens = tokenize_path_parts(p, root, folder_depth, stopwords=stopwords)
+    tokens = folder_tokens + file_tokens
+    pr_folder = parse_tokens(folder_tokens, modality_map=modality_map)
+    pr_file = parse_tokens(file_tokens, modality_map=modality_map)
+    row: Dict[str, Any] = {}
+    row.update(pr_folder.data)
+    row.update(pr_file.data)
+    dup = set(pr_folder.data.keys()) & set(pr_file.data.keys())
+    if dup:
+        row["_duplicate_keys"] = sorted(dup)
+    row["_folder_tokens"] = folder_tokens
+    row["_file_tokens"] = file_tokens
+    row["_folder_token_to_key"] = getattr(pr_folder, "token_to_key", {})
+    row["_file_token_to_key"] = getattr(pr_file, "token_to_key", {})
+    row["path"] = str(p)
+    row["relpath"] = str(p.relative_to(root))
+    row["ext"] = p.suffix.lower()
+    row["stem"] = p.stem
+    row["tokens"] = tokens
+    row["trace"] = pr_file.trace
+    row["recognized"] = pr_file.recognized
+    row["total_tokens"] = len(tokens)
+    row["confidence"] = round(
+        (1.0 - math.exp(-3.0 * pr_file.recognized / max(1, len(tokens)))), 4
+    )
+    return row
+
+
 def run_indexer(
     root_dir: str | Path,
     output_dir: str | Path,
@@ -457,7 +535,10 @@ def run_indexer(
     """
     Run full index pipeline. Config can override:
     allowed_suffixes (set or list), folder_token_depth (int), group_keys (tuple or list),
-    recursive (bool), include_hidden (bool), stopwords (set or list), modality_map (dict).
+    recursive (bool), include_hidden (bool), stopwords (set or list), modality_map (dict),
+    parallel_threshold (int, default 100: min files to use multicore),
+    parallel_max_workers (int, default cpu_count-1),
+    log_callback (callable[str] for timing/log messages).
     Returns (rows, groups).
     """
     cfg = config or {}
@@ -469,6 +550,9 @@ def run_indexer(
     if allowed is not None and not isinstance(allowed, set):
         allowed = set(allowed)
     allowed = allowed or DEFAULT_ALLOWED_SUFFIXES
+
+    recursive = cfg.get("recursive", True)
+    include_hidden = cfg.get("include_hidden", False)
 
     folder_depth = cfg.get("folder_token_depth", 99)
     group_keys = cfg.get("group_keys")
@@ -487,45 +571,56 @@ def run_indexer(
             normalized.append(nk)
     group_keys = tuple(normalized)
 
-    recursive = cfg.get("recursive", True)
-    include_hidden = cfg.get("include_hidden", False)
     stopwords = cfg.get("stopwords")
     if stopwords is not None and not isinstance(stopwords, set):
         stopwords = set(stopwords)
     stopwords = stopwords or DEFAULT_STOPWORDS
     modality_map = cfg.get("modality_map") or DEFAULT_MODALITY_MAP
+    log_cb: Optional[Callable[[str], None]] = cfg.get("log_callback")
 
+    def _log(msg: str) -> None:
+        if log_cb:
+            log_cb(msg)
+
+    t0 = time.perf_counter()
+    _log(f"[{0:.3f}s] iter_files start")
     files = iter_files(root, allowed_suffixes=allowed, recursive=recursive, include_hidden=include_hidden)
-    rows: List[Dict[str, Any]] = []
-    for p in files:
-        folder_tokens, file_tokens = tokenize_path_parts(p, root, folder_depth, stopwords=stopwords)
-        tokens = folder_tokens + file_tokens
-        pr_folder = parse_tokens(folder_tokens, modality_map=modality_map)
-        pr_file = parse_tokens(file_tokens, modality_map=modality_map)
-        row: Dict[str, Any] = {}
-        row.update(pr_folder.data)
-        row.update(pr_file.data)
-        dup = set(pr_folder.data.keys()) & set(pr_file.data.keys())
-        if dup:
-            row["_duplicate_keys"] = sorted(dup)
-        row["_folder_tokens"] = folder_tokens
-        row["_file_tokens"] = file_tokens
-        row["_folder_token_to_key"] = getattr(pr_folder, "token_to_key", {})
-        row["_file_token_to_key"] = getattr(pr_file, "token_to_key", {})
-        row["path"] = str(p)
-        row["relpath"] = str(p.relative_to(root))
-        row["ext"] = p.suffix.lower()
-        row["stem"] = p.stem
-        row["tokens"] = tokens
-        row["trace"] = pr_file.trace
-        row["recognized"] = pr_file.recognized
-        row["total_tokens"] = len(tokens)
-        row["confidence"] = round(
-            (1.0 - math.exp(-3.0 * pr_file.recognized / max(1, len(tokens)))), 4
-        )
-        rows.append(row)
+    file_list = list(files)
+    t1 = time.perf_counter()
+    _log(f"[{t1 - t0:.3f}s] iter_files done: {len(file_list)} files")
 
+    stopwords_frozen = frozenset(stopwords)
+    modality_map_copy = dict(modality_map)
+
+    parallel_threshold = cfg.get("parallel_threshold", _PARALLEL_THRESHOLD)
+    max_workers = cfg.get("parallel_max_workers")
+    if max_workers is None:
+        max_workers = max(1, (os.cpu_count() or 1) - 1)
+
+    use_parallel = len(file_list) >= parallel_threshold and max_workers > 1
+    _log(f"[{t1 - t0:.3f}s] index: {'parallel' if use_parallel else 'sequential'} (workers={max_workers})")
+
+    t2 = time.perf_counter()
+    if use_parallel:
+        args_list = [
+            (p, root, folder_depth, stopwords_frozen, modality_map_copy)
+            for p in file_list
+        ]
+        with ProcessPoolExecutor(max_workers=max_workers) as ex:
+            rows = list(ex.map(_index_single_file, args_list))
+    else:
+        rows = [
+            _index_single_file((p, root, folder_depth, stopwords_frozen, modality_map_copy))
+            for p in file_list
+        ]
+    t3 = time.perf_counter()
+    _log(f"[{t3 - t0:.3f}s] index done: {t3 - t2:.3f}s for {len(rows)} files ({len(rows) / max(0.001, t3 - t2):.0f} files/s)")
+
+    t4 = time.perf_counter()
     groups = group_rows(rows, group_keys)
+    t5 = time.perf_counter()
+    _log(f"[{t5 - t0:.3f}s] group_rows: {t5 - t4:.3f}s, {len(groups)} groups")
+    _log(f"[{t5 - t0:.3f}s] total")
     return rows, groups
 
 
@@ -565,8 +660,6 @@ def write_csv(
             rr["trace"] = " | ".join(rr["trace"])
         if isinstance(rr.get("tokens"), list):
             rr["tokens"] = " ".join(rr["tokens"])
-        if isinstance(rr.get("lengths"), list):
-            rr["lengths"] = json.dumps(rr["lengths"], ensure_ascii=False)
         flat_rows.append(rr)
     keys = sorted({k for r in flat_rows for k in r.keys()})
     with out_path.open("w", newline="", encoding="utf-8") as f:
@@ -594,7 +687,13 @@ def build_column_metadata(
             continue
         for r in rows:
             v = r.get(k)
-            if v is not None and is_quantitative_val(v):
+            if v is None:
+                continue
+            if is_quantitative_val(v):
+                _, u, raw_u = get_export_value_and_metadata(v, k, column_si_scale)
+                out[k] = {"unit": u, "raw_unit": raw_u}
+                break
+            if isinstance(v, list) and v and is_quantitative_val(v[0]):
                 _, u, raw_u = get_export_value_and_metadata(v, k, column_si_scale)
                 out[k] = {"unit": u, "raw_unit": raw_u}
                 break

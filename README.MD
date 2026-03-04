@@ -66,7 +66,7 @@ Pipeline:
 
 **GUI:** Root- und Output-Ordner sowie GROUP_KEYS in der Oberflaeche einstellen; Schema als project.json/project.ini speichern und wieder laden („Root gemaess Schema laden“).
 
-**Namenskonventionen:** [Proper_file_naming.md](Proper_file_naming.md) definiert Schema (Dezimal `p`, Trenner, erlaubte Zeichen) und listet, welche Schreibweisen der Indexer erkennt; dort steht auch, wie man neue Schreibweisen ergaenzt.
+**Namenskonventionen:** [Naming_Cheat_Sheet.md](Naming_Cheat_Sheet.md) (Schnellueberblick) | [Proper_file_naming.md](Proper_file_naming.md) (DE) | [Proper_file_naming_EN.md](Proper_file_naming_EN.md) (EN) – Schema, erkannte Schreibweisen, Erweiterung.
 
 ---
 

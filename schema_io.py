@@ -15,7 +15,7 @@ TUPLE_KEYS = ("group_keys",)
 DEFAULT_SCHEMA = {
     "root_dir": "",
     "output_dir": "",
-    "allowed_suffixes": [".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".csv", ".tsv", ".txt", ".npy", ".npz", ".h5", ".hdf5", ".json", ".yaml", ".yml"],
+    "allowed_suffixes": [".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".csv", ".tsv", ".txt", ".dat", ".asc", ".npy", ".npz", ".h5", ".hdf5", ".json", ".yaml", ".yml"],
     "folder_token_depth": 99,
     "group_keys": ["date", "experiment", "sample", "run", "rep"],
     "recursive": True,
@@ -27,6 +27,7 @@ DEFAULT_SCHEMA = {
     "column_si_scale": {},
     "modality_map": None,
     "stopwords": None,
+    "custom_token_map": {},
 }
 
 

@@ -38,6 +38,9 @@ def load_settings() -> dict:
         "max_width": 800,
         "max_height": 1080,
         "light_mode": True,
+        "splitter_sizes": "",
+        "main_splitter_sizes": "",
+        "outer_splitter_sizes": "",
         "root_dir": "",
         "output_dir": "",
         "db_path": "",
@@ -57,6 +60,12 @@ def load_settings() -> dict:
                         pass
             if "light_mode" in s:
                 out["light_mode"] = s["light_mode"].lower() in ("1", "true", "yes")
+            if "splitter_sizes" in s:
+                out["splitter_sizes"] = s["splitter_sizes"].strip()
+            if "main_splitter_sizes" in s:
+                out["main_splitter_sizes"] = s["main_splitter_sizes"].strip()
+            if "outer_splitter_sizes" in s:
+                out["outer_splitter_sizes"] = s["outer_splitter_sizes"].strip()
         if cfg.has_section("paths"):
             for k in ("root_dir", "output_dir", "db_path"):
                 if k in cfg["paths"]:
@@ -73,17 +82,27 @@ def save_settings(
     output_dir: str = "",
     db_path: str = "",
     light_mode: bool = True,
+    splitter_sizes: str = "",
+    main_splitter_sizes: str = "",
+    outer_splitter_sizes: str = "",
 ) -> None:
-    """Save window size, paths, and theme to dampf.ini."""
+    """Save window size, paths, theme, splitter to dampf.ini."""
     p = _get_settings_path()
     cfg = configparser.ConfigParser()
-    cfg["dampf"] = {
+    dampf = {
         "width": str(width),
         "height": str(height),
         "max_width": "800",
         "max_height": "1080",
         "light_mode": "true" if light_mode else "false",
     }
+    if splitter_sizes:
+        dampf["splitter_sizes"] = splitter_sizes
+    if main_splitter_sizes:
+        dampf["main_splitter_sizes"] = main_splitter_sizes
+    if outer_splitter_sizes:
+        dampf["outer_splitter_sizes"] = outer_splitter_sizes
+    cfg["dampf"] = dampf
     cfg["paths"] = {
         "root_dir": root_dir or "",
         "output_dir": output_dir or "",

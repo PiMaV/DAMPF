@@ -2,14 +2,58 @@
 
 Konvention fuer Pfade und Dateinamen; der **DAMPF-Indexer** ([indexer.py](indexer.py)) ist darauf abgestimmt und erkennt die unten genannten Muster.
 
+**Schnellueberblick:** [Naming_Cheat_Sheet.md](Naming_Cheat_Sheet.md) | **English:** [Proper_file_naming_EN.md](Proper_file_naming_EN.md)
+
+---
+
+## Quick Start (3 Regeln)
+
+1. **Trenner:** `_` (underscore) oder `-` (dash), nie Leerzeichen
+2. **Dezimal:** `p` bevorzugt (0p2us), Punkt `.` wird ebenfalls unterstuetzt (0.2us)
+3. **Beispiel:** `2024-02-07_run1_4kV_10us_001.png` → Datum, Run, Spannung, Exposure, Frame
+
+---
+
+## Inhaltsverzeichnis
+
+- [Schema](#schema)
+- [Implizit vs. Explizit (key=value)](#implizit-vs-explizit-keyvalue)
+- [Vom DAMPF-Indexer erkannt](#vom-dampf-indexer-erkannt)
+- [Rules](#rules)
+- [Erweiterung](#erweiterung-exotische-schreibweisen)
+
 ---
 
 ## Schema
 | Use Case             | Char                   | Example                  |
 | -------------------- | ---------------------- | ------------------------ |
 | PARAMETER Separation | _ (underscore) OR Path | 4kV_10us_FF OR 4kV\10us  |
-| Decimal Point        | p (The char p)         | 0p2us                    |
-| INNER Separation     | - (dash / minus)       | 2020-06-21 or Slit-0p5mm |
+| Decimal Point        | p bevorzugt, . unterstuetzt | 0p2us oder 0.2us   |
+| INNER Separation (Trennung innerhalb eines Namens) | - (dash / minus) | 2020-06-21 or Slit-0p5mm |
+
+---
+
+## Implizit vs. Explizit (key=value)
+
+Du kannst Parameter **implizit** (kurz) oder **explizit** (eindeutig) schreiben:
+
+| Schreibweise | Beispiel | Bedeutung |
+| ------------ | -------- | ---------- |
+| **Implizit** | `4kV_10us_001.png` | Indexer erkennt: 4kV=Spannung, 10us=Exposure, 001=Frame |
+| **Explizit** | `voltage=4kV_exposure=10us_frame=001.png` | Du benennst jeden Wert direkt |
+
+**Wann explizit?**
+- Eigene Parameter: `sample=ABC123`, `operator=john`, `batch=7`
+- Eindeutigkeit: `temp=22p5` statt nur `22p5` (keine Verwechslung mit Strom)
+- Wenn implizite Erkennung nicht greift
+
+**Beispiele:**
+```
+Implizit:  run1_4kV_10us_001.png
+Explizit:  run=1_voltage=4kV_exposure=10us_frame=001.png
+```
+
+Beides funktioniert; explizit ist immer eindeutig, implizit ist kuerzer.
 
 ---
 
@@ -17,7 +61,7 @@ Konvention fuer Pfade und Dateinamen; der **DAMPF-Indexer** ([indexer.py](indexe
 
 | Schreibweise | Beispiel-Token | Erkanntes Feld |
 | ------------ | ----------------- | -------------- |
-| Dezimal mit `p` | 0p2us, 4p2kv, 22p5 | Wert als Dezimal (0.2, 4.2, 22.5) |
+| Dezimal (`p` bevorzugt, `.` unterstuetzt) | 0p2us, 4.2kv, 22p5 | Wert als Dezimal (0.2, 4.2, 22.5) |
 | Zeit | ns, us, ms, s | exposure (val+unit) |
 | Spannung | v, kv, mv, uv | voltage (val+unit) |
 | Strom | a, ma, ua | current (val+unit) |
@@ -44,21 +88,26 @@ Neue „exotische“ Schreibweisen: siehe Abschnitt **Erweiterung** unten.
 SPACE or "White Space" is not an option! Use dashes (-) or CamelCasing instead:
 	- NoisyAndDarkEnvironment OR noisy-and-dark-environment
 
-BAD Chars (Dont use them in Names):
-`` \ / : * ? " < > | [ ] & $ , . 
+BAD Chars (Don't use them in names):
 
-Dont use Umlauts (öäü) or language special chars  (é, à, ...)
-use (oe, ae, ue, e, a)
+` \ / : * ? " < > | [ ] & $ , .
 
-if needed, PARAMETERS can be in Path AND Filename, ONLY if they are identical. Thus, a parameter in a Path = ``...Cond-1\Set-4\T-250\...`` must be identical in filename. Example: ``...Cond-1\Set-4\T-250\4kV\Set-4_10us_001.asc
+(Ausnahme: `.` in Zahlen mit Einheit wie `4.2kv` wird unterstuetzt.)
 
-PARAMETERS must be more than a single char (at least 3):
-	- BAD: 4kv_10us_c_001
+Don't use Umlauts or language special chars – use ASCII instead (oe, ae, ue, e, a).
+
+**Pfad und Dateiname – Best Practice vs. Legacy**
+
+- **Best Practice:** Parameter entweder im Pfad ODER im Dateinamen, nicht doppelt.
+- **Legacy:** Beides wird unterstuetzt; bestehende Strukturen mit Parametern in Pfad und Dateiname funktionieren weiterhin. Bei Konflikten gilt die Dateiname-Logik.
+
+Parameter-Bezeichner mindestens 2 Zeichen (besser 3+), damit keine Mehrdeutigkeit entsteht:
+	- BAD: 4kv_10us_c_001 („c“ allein = Temperatur oder Strom?)
 	- Good: 4kV_10us_c-set_001
 
 - max. 255 chars for combined path + filename.
-	- Example of a proper Path+File Combination with a 243 char naming: 
-	- `` C:\Data\2024\ProjectX\PreTest\ExperimentNr\666\Setup1_Source4\StandardConditions_room5\10sccm_10kV_2A\ICCD-Images\150us-Exposure_250usGate_t0-1000ms\Session_2024-02-07\measurement_2024-02-07_T1500_room5_150us-Exposure_250usGate_Temp-22p5C.csv
+	- Example of a proper Path+File combination (243 chars):
+	- `C:\Data\2024\ProjectX\PreTest\ExperimentNr\666\Setup1_Source4\StandardConditions_room5\10sccm_10kV_2A\ICCD-Images\150us-Exposure_250usGate_t0-1000ms\Session_2024-02-07\measurement_2024-02-07_T1500_room5_150us-Exposure_250usGate_Temp-22p5C.csv`
 
 In the example, some information is redundant and could be reduced if necessary
 
@@ -79,7 +128,7 @@ RUNNING NUMBERS are at the end. USE Leading Zeros.
 Um weitere Schreibweisen oder Einheiten zu unterstuetzen:
 
 1. **Neue Wert+Einheit (z.B. sccm, bar):**
-   - In [indexer.py](indexer.py): Einheit in `RE_NUMBER_UNIT` (Zeile ~67–71) und in der passenden RE_*-Variable (RE_LEN, RE_VOLT, …) ergaenzen; ggf. neue RE_* und `unit_scale()` + Parsing in `parse_tokens()`.
+   - In [indexer.py](indexer.py): Einheit in `RE_NUMBER_UNIT` und in der passenden RE_*-Variable (`RE_LEN`, `RE_VOLT`, …) ergaenzen; ggf. neue RE_* und `unit_scale()` + Parsing in `parse_tokens()`.
    - Hier in **Vom DAMPF-Indexer erkannt** eintragen.
 
 2. **Neue Tags / Modality / Keys:**

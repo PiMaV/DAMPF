@@ -14,6 +14,7 @@ UNITS_LUT: Dict[str, Tuple[str, Tuple[str, ...], str]] = {
     "frequency": ("Hz", ("Hz", "kHz", "MHz", "GHz"), "Frequency"),
     "exposure": ("s", ("ns", "us", "ms", "s"), "Exposure"),
     "length": ("m", ("nm", "um", "mm", "cm", "m", "px"), "Length"),
+    "lengths": ("m", ("nm", "um", "mm", "cm", "m", "px"), "Length"),
     "temperature": ("C", ("C", "K"), "Temperature"),
     "gas_pct": ("%", ("%",), "Gas"),  # He, N2, CO2 etc.
 }
@@ -191,7 +192,10 @@ def get_export_value_and_metadata(
     """
     (val_to_write, unit_for_meta, raw_unit).
     column_si_scale: key -> exponent (-3=m, 0=base, 6=M). None/fehlend = raw behalten.
+    Bei lengths (Liste von val+unit): nimmt erstes Element, Spalte = nur Numeric; Unit in Metadaten.
     """
+    if isinstance(v, list) and v and is_quantitative_val(v[0]):
+        v = v[0]
     if not is_quantitative_val(v):
         return (v, "", "")
     val, raw_unit = float(v.get("val", 0)), v.get("unit", "")
@@ -240,11 +244,20 @@ def build_key_tree(
     for v in by_cat.values():
         v.sort(key=lambda x: (order_idx.get(x[0], 9999), x[0]))
     out: List[Tuple[str, List[Tuple[str, str]]]] = []
-    for c in cat_order:
+    cat_order_list = list(cat_order)
+    if order_idx:
+        cat_min_order = {}
+        for c, pairs in by_cat.items():
+            idxs = [order_idx.get(p[0], 9999) for p in pairs]
+            cat_min_order[c] = min(idxs) if idxs else 9999
+        def _cat_sort_key(c: str) -> tuple:
+            return (cat_min_order.get(c, 9999), cat_order_list.index(c) if c in cat_order_list else 9999)
+        ordered_cats = sorted(by_cat.keys(), key=_cat_sort_key)
+    else:
+        ordered_cats = [c for c in cat_order if c in by_cat]
+        ordered_cats += sorted(c for c in by_cat.keys() if c not in cat_order)
+    for c in ordered_cats:
         if c in by_cat:
-            out.append((c, by_cat[c]))
-    for c in sorted(by_cat.keys()):
-        if c not in cat_order:
             out.append((c, by_cat[c]))
     return out
 

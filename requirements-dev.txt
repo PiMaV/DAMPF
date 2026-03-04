@@ -1,0 +1,3 @@
+# DAMPF dev dependencies
+-r requirements.txt
+pytest>=7.0
