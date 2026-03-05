@@ -9,8 +9,9 @@ One-page quick reference. Full docs: [Proper_file_naming_EN.md](Proper_file_nami
 | # | Rule | Example |
 |---|------|---------|
 | 1 | Separators: `_` or `-`, never space | `4kV_10us` or `Slit-0p5mm` |
-| 2 | Decimal: `p` preferred, `.` supported | `0p2us` or `0.2us` |
-| 3 | Example | `2024-02-07_run1_4kV_10us_001.png` |
+| 2 | Unit directly to number (no space) | `4kV`, `10us`, `0p2us` |
+| 3 | Decimal: `p` preferred, `.` supported | `0p2us` or `0.2us` |
+| 4 | Example | `2024-02-07_run1_4kV_10us_001.png` |
 
 ---
 
@@ -32,7 +33,7 @@ One-page quick reference. Full docs: [Proper_file_naming_EN.md](Proper_file_nami
 | a, ma, ua | current | nm, um, mm, m | lengths |
 | c, k | temp | hz, khz, mhz | freq |
 | 2024-02-07 | date | run1, rep2 | run, rep |
-| 000, 001 | frame | cam1 | camera |
+| 000, 001 | frame | cam1, C1 | camera, channel |
 | M25, S4 | param | key=value | explicit |
 
 ---

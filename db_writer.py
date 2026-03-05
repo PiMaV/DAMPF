@@ -8,13 +8,14 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from key_lut import get_export_value_and_metadata, is_quantitative_val
+from key_lut import get_display_value, get_export_value_and_metadata, is_quantitative_val
 
 # Keys die nicht als Daten-Spalten in die Contract-Tabelle kommen (nur Metadaten/Interna)
 ROW_META_KEYS = {
     "path", "relpath", "ext", "stem", "tokens", "trace", "recognized",
     "total_tokens", "confidence",
     "_duplicate_keys", "_folder_tokens", "_file_tokens", "_folder_token_to_key", "_file_token_to_key",
+    "_token_original",
 }
 
 
@@ -152,7 +153,8 @@ def write_index_to_sqlite(
             rel_path_str = _relpath_from_db(r.get("path", ""), db_path)
             vals: List[Any] = [rel_path_str]
             for k in data_keys:
-                v, _u, _ru = _serialize_value(r.get(k), key=k, column_si_scale=column_si_scale)
+                v_display = get_display_value(r.get(k), r)
+                v, _u, _ru = _serialize_value(v_display, key=k, column_si_scale=column_si_scale)
                 vals.append(v)
             conn.execute(insert_sql, vals)
 

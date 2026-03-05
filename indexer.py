@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from key_lut import GAS_KEYS, extract_val_for_export, format_val_unit, is_quantitative_val, unit_scale
+from key_lut import GAS_KEYS, extract_val_for_export, format_val_unit, get_display_value, is_quantitative_val, unit_scale
 
 # Default config (overridable via run_indexer config)
 DEFAULT_ALLOWED_SUFFIXES = {
@@ -58,7 +58,7 @@ RE_RUN = re.compile(r"^(?:run|r)(?P<n>\d{1,4})$")
 RE_REP = re.compile(r"^(?:rep|repeat|repetition)(?P<n>\d{1,4})$")
 RE_TRIAL = re.compile(r"^(?:trial|tr)(?P<n>\d{1,4})$")
 RE_CAM = re.compile(r"^(?:cam|camera)(?P<n>\d{1,3})$")
-RE_CH = re.compile(r"^(?:ch|chan|channel)(?P<n>\d{1,3})$")
+RE_CH = re.compile(r"^(?:ch|chan|channel|c)(?P<n>\d{1,3})$", re.IGNORECASE)
 RE_ROI = re.compile(r"^(?:roi)(?P<id>[a-z0-9]+)$")
 RE_FRAME = re.compile(r"^(?:frame|f)(?P<n>\d{1,9})$")
 RE_SEQ = re.compile(r"^(?P<n>\d{1,2})$")
@@ -88,8 +88,11 @@ RE_PARAM = re.compile(r"^([a-z]{1,3})(\d+)$")
 # Number + letter(s) as one token (e.g. 300He, 300N2); letter part may contain digits (N2)
 RE_NUM_LETTERS_TOKEN = re.compile(r"^\d+(?:p\d+)?[A-Za-z][A-Za-z0-9]{0,2}$", re.IGNORECASE)
 RE_NUM_LETTERS = re.compile(r"^(\d+(?:p\d+)?)([a-z][a-z0-9]{0,2})$")
-# 2-3 letters only (e.g. FF) -> string param key=value
-RE_LETTERS_ONLY_TOKEN = re.compile(r"^[A-Za-z]{2,3}$", re.IGNORECASE)
+# 2-4 letters only (e.g. FF, KPSc) -> string param key=value
+RE_LETTERS_ONLY_TOKEN = re.compile(r"^[A-Za-z]{2,4}$", re.IGNORECASE)
+# Flow: Zahl + slm + Gas (e.g. 5slmAr, 10slmN2) -> gas_flow
+RE_SLM_FLOW_TOKEN = re.compile(r"^\d+(?:p\d+)?slm[a-zA-Z][a-zA-Z0-9]{0,2}$", re.IGNORECASE)
+RE_SLM_FLOW = re.compile(r"^(\d+(?:p\d+)?)slm([a-zA-Z][a-zA-Z0-9]{0,2})$", re.IGNORECASE)
 
 
 def is_hidden(path: Path) -> bool:
@@ -108,11 +111,18 @@ def split_transitions(s: str) -> List[str]:
     return parts if parts else [s]
 
 
-def tokenize_string(s: str, stopwords: Optional[set] = None) -> List[str]:
+def tokenize_string(
+    s: str,
+    stopwords: Optional[set] = None,
+    norm_to_orig: Optional[Dict[str, str]] = None,
+) -> List[str]:
+    """Return normalized tokens. If norm_to_orig given, fill with normalized->original mapping."""
     stopwords = stopwords or DEFAULT_STOPWORDS
     s = s.strip()
     if not s:
         return []
+    if norm_to_orig is None:
+        norm_to_orig = {}
     # Normalize decimal dot to p (e.g. 4.2kv -> 4p2kv) before split, since . is a delimiter
     s = re.sub(r"(\d)\.(\d)", r"\1p\2", s)
     s = re.sub(r"[\/\\\-\_\.\+\(\)\[\]\{\},;]+", " ", s)
@@ -122,14 +132,25 @@ def tokenize_string(s: str, stopwords: Optional[set] = None) -> List[str]:
         pl = p.replace("µ", "u").lower()
         if RE_NUMBER_UNIT.match(pl):
             out.append(pl)
+            norm_to_orig.setdefault(pl, p)
         elif RE_PARAM_TOKEN.match(pl):
             out.append(pl)
+            norm_to_orig.setdefault(pl, p)
         elif RE_NUM_LETTERS_TOKEN.match(pl):
             out.append(pl)
+            norm_to_orig.setdefault(pl, p)
         elif RE_LETTERS_ONLY_TOKEN.match(pl):
             out.append(pl)
+            norm_to_orig.setdefault(pl, p)
+        elif RE_SLM_FLOW_TOKEN.match(pl):
+            out.append(pl)
+            norm_to_orig.setdefault(pl, p)
         else:
-            out.extend(split_transitions(p))
+            sub = split_transitions(p)
+            for t in sub:
+                tt = t.strip().lower()
+                norm_to_orig.setdefault(tt, t)
+            out.extend(sub)
     norm = []
     for t in out:
         tt = t.strip().lower()
@@ -140,18 +161,19 @@ def tokenize_string(s: str, stopwords: Optional[set] = None) -> List[str]:
 
 
 def tokenize_path(path: Path, root: Path, folder_depth: int, stopwords: Optional[set] = None) -> List[str]:
-    folder_tokens, file_tokens = tokenize_path_parts(path, root, folder_depth, stopwords)
+    folder_tokens, file_tokens, _ = tokenize_path_parts(path, root, folder_depth, stopwords)
     return folder_tokens + file_tokens
 
 
 def tokenize_path_parts(
     path: Path, root: Path, folder_depth: int, stopwords: Optional[set] = None
-) -> Tuple[List[str], List[str]]:
-    """Return (folder_tokens, file_tokens) for duplicate detection (folder vs filename)."""
+) -> Tuple[List[str], List[str], Dict[str, str]]:
+    """Return (folder_tokens, file_tokens, norm_to_orig)."""
     rel = path.relative_to(root)
     parts = list(rel.parts)
+    norm_to_orig: Dict[str, str] = {}
     if not parts:
-        return [], []
+        return [], [], norm_to_orig
     filename = parts[-1]
     folders = parts[:-1]
     if folder_depth <= 0:
@@ -160,10 +182,10 @@ def tokenize_path_parts(
         use_folders = folders[-folder_depth:] if folder_depth < 99 else folders
         folder_tokens = []
         for f in use_folders:
-            folder_tokens.extend(tokenize_string(f, stopwords))
+            folder_tokens.extend(tokenize_string(f, stopwords, norm_to_orig))
     stem = Path(filename).stem
-    file_tokens = tokenize_string(stem, stopwords)
-    return folder_tokens, file_tokens
+    file_tokens = tokenize_string(stem, stopwords, norm_to_orig)
+    return folder_tokens, file_tokens, norm_to_orig
 
 
 def parse_number(s: str) -> Optional[float]:
@@ -353,6 +375,13 @@ def parse_tokens(tokens: List[str], modality_map: Optional[Dict[str, str]] = Non
                 else:
                     set_field(letters, int(val) if val == int(val) else val, "num_letters", tok)
             continue
+        m = RE_SLM_FLOW.match(tok)
+        if m:
+            val = parse_number(m.group(1))
+            gas = m.group(2)  # preserve case (Ar, N2)
+            if val is not None:
+                set_field("gas_flow", {"val": val, "unit": "slm", "gas": gas}, "gas_flow", tok)
+            continue
         if RE_LETTERS_ONLY_TOKEN.match(tok) and tok not in modality_map and tok not in PROC_TAGS and tok not in data:
             set_field(tok, tok, "letters_param", tok)
             continue
@@ -428,7 +457,7 @@ def group_rows(rows: List[Dict[str, Any]], keys: Tuple[str, ...]) -> Dict[str, L
 
 
 # Keys we never suggest for grouping (internal/metadata)
-_ROW_META_KEYS = {"path", "relpath", "ext", "stem", "tokens", "trace", "recognized", "total_tokens", "confidence", "_duplicate_keys", "_folder_tokens", "_file_tokens", "_folder_token_to_key", "_file_token_to_key"}
+_ROW_META_KEYS = {"path", "relpath", "ext", "stem", "tokens", "trace", "recognized", "total_tokens", "confidence", "_duplicate_keys", "_folder_tokens", "_file_tokens", "_folder_token_to_key", "_file_token_to_key", "_token_original"}
 
 # Preferred order for group keys when they appear in data
 _PREFERRED_GROUP_ORDER = ("date", "experiment", "sample", "run", "rep", "trial", "exposure", "modality", "camera", "channel")
@@ -499,7 +528,7 @@ def _index_single_file(
 ) -> Dict[str, Any]:
     """Worker for ProcessPoolExecutor: index one file. Top-level for picklability."""
     p, root, folder_depth, stopwords, modality_map = args
-    folder_tokens, file_tokens = tokenize_path_parts(p, root, folder_depth, stopwords=stopwords)
+    folder_tokens, file_tokens, norm_to_orig = tokenize_path_parts(p, root, folder_depth, stopwords=stopwords)
     tokens = folder_tokens + file_tokens
     pr_folder = parse_tokens(folder_tokens, modality_map=modality_map)
     pr_file = parse_tokens(file_tokens, modality_map=modality_map)
@@ -511,6 +540,7 @@ def _index_single_file(
         row["_duplicate_keys"] = sorted(dup)
     row["_folder_tokens"] = folder_tokens
     row["_file_tokens"] = file_tokens
+    row["_token_original"] = norm_to_orig
     row["_folder_token_to_key"] = getattr(pr_folder, "token_to_key", {})
     row["_file_token_to_key"] = getattr(pr_file, "token_to_key", {})
     row["path"] = str(p)
@@ -635,8 +665,8 @@ def write_jsonl(
     keep = set(used_keys) | {"path", "relpath"} if used_keys else None
     with out_path.open("w", encoding="utf-8") as f:
         for r in rows:
-            out = {k: v for k, v in r.items() if keep is None or k in keep} if keep else dict(r)
-            out = {k: get_export_value_and_metadata(v, k, column_si_scale)[0] for k, v in out.items()}
+            out = {k: v for k, v in r.items() if (keep is None or k in keep) and not k.startswith("_")}
+            out = {k: get_export_value_and_metadata(get_display_value(v, r), k, column_si_scale)[0] for k, v in out.items()}
             f.write(json.dumps(out, ensure_ascii=False) + "\n")
 
 
@@ -651,9 +681,9 @@ def write_csv(
     keep = set(used_keys) | {"path", "relpath"} if used_keys else None
     flat_rows: List[Dict[str, Any]] = []
     for r in rows:
-        rr = {k: v for k, v in r.items() if keep is None or k in keep} if keep else dict(r)
+        rr = {k: v for k, v in r.items() if (keep is None or k in keep) and not k.startswith("_")}
         for k in list(rr.keys()):
-            rr[k] = get_export_value_and_metadata(rr[k], k, column_si_scale)[0]
+            rr[k] = get_export_value_and_metadata(get_display_value(rr[k], r), k, column_si_scale)[0]
         if isinstance(rr.get("processing"), list):
             rr["processing"] = ",".join(rr["processing"])
         if isinstance(rr.get("trace"), list):

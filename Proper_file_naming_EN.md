@@ -6,11 +6,12 @@ Conventions for paths and filenames; the **DAMPF Indexer** ([indexer.py](indexer
 
 ---
 
-## Quick Start (3 Rules)
+## Quick Start (4 Rules)
 
 1. **Separators:** `_` (underscore) or `-` (dash), never spaces
-2. **Decimal:** `p` preferred (0p2us), dot `.` also supported (0.2us)
-3. **Example:** `2024-02-07_run1_4kV_10us_001.png` → date, run, voltage, exposure, frame
+2. **Unit directly to number** (no space): `4kV`, `10us`, `0p2us`
+3. **Decimal:** `p` preferred (0p2us), dot `.` also supported (0.2us)
+4. **Example:** `2024-02-07_run1_4kV_10us_001.png` → date, run, voltage, exposure, frame
 
 ---
 
@@ -29,6 +30,7 @@ Conventions for paths and filenames; the **DAMPF Indexer** ([indexer.py](indexer
 | Use Case | Char | Example |
 | -------- | ---- | ------- |
 | Parameter separation | _ (underscore) or path | 4kV_10us_FF or 4kV\10us |
+| Unit to number | directly, no space | 4kV, 10us, 0p2us |
 | Decimal point | p preferred, . supported | 0p2us or 0.2us |
 | Inner separation | - (dash/minus) | 2024-06-21 or Slit-0p5mm |
 
@@ -73,10 +75,11 @@ Both work; explicit is always unambiguous, implicit is shorter.
 | Run/Rep/Trial | run1, rep2, trial3 | run, rep, trial |
 | Letter(s)+number | M25, S4, T250 | key=value (e.g. m=25) |
 | Number+letter(s) | 300He, 300N2 | key=value; He/N2/CO2 = gas % |
-| Letters only (2–3) | FF | string param key=value |
+| Flow (slm) | 5slmAr, 10slmN2 | gas_flow (val, unit=slm, gas) |
+| Letters only (2–4) | FF, KPSc | string param key=value |
 | Frame (digits only) | 000, 001, 040, 165 | frame (integer, 3+ digits) |
 | Seq/Session (1–2 digits) | 07 in 10mm_07 | seq |
-| Camera/Channel | cam1, channel2 | camera, channel |
+| Camera/Channel | cam1, channel2, C1, C2, C3 | camera, channel |
 | key=value | arbitrary | stored as key-value |
 | Processing tags | raw, dark, flat, avg, … | processing (list) |
 | Modality | rgb, ir, thermal, … | modality (via MODALITY_MAP) |

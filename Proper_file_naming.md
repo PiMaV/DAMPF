@@ -6,11 +6,12 @@ Konvention fuer Pfade und Dateinamen; der **DAMPF-Indexer** ([indexer.py](indexe
 
 ---
 
-## Quick Start (3 Regeln)
+## Quick Start (4 Regeln)
 
 1. **Trenner:** `_` (underscore) oder `-` (dash), nie Leerzeichen
-2. **Dezimal:** `p` bevorzugt (0p2us), Punkt `.` wird ebenfalls unterstuetzt (0.2us)
-3. **Beispiel:** `2024-02-07_run1_4kV_10us_001.png` → Datum, Run, Spannung, Exposure, Frame
+2. **Einheit direkt an Zahl binden** (kein Leerzeichen): `4kV`, `10us`, `0p2us`
+3. **Dezimal:** `p` bevorzugt (0p2us), Punkt `.` wird ebenfalls unterstuetzt (0.2us)
+4. **Beispiel:** `2024-02-07_run1_4kV_10us_001.png` → Datum, Run, Spannung, Exposure, Frame
 
 ---
 
@@ -28,6 +29,7 @@ Konvention fuer Pfade und Dateinamen; der **DAMPF-Indexer** ([indexer.py](indexe
 | Use Case             | Char                   | Example                  |
 | -------------------- | ---------------------- | ------------------------ |
 | PARAMETER Separation | _ (underscore) OR Path | 4kV_10us_FF OR 4kV\10us  |
+| Einheit an Zahl      | direkt, ohne Leerzeichen | 4kV, 10us, 0p2us |
 | Decimal Point        | p bevorzugt, . unterstuetzt | 0p2us oder 0.2us   |
 | INNER Separation (Trennung innerhalb eines Namens) | - (dash / minus) | 2020-06-21 or Slit-0p5mm |
 
@@ -72,10 +74,11 @@ Beides funktioniert; explizit ist immer eindeutig, implizit ist kuerzer.
 | Run/Rep/Trial | run1, rep2, trial3 | run, rep, trial |
 | Buchstabe(n)+Zahl (Parameter) | M25, S4, T250 | 1–3 Buchstaben + Zahl → key=value (z.B. m=25) |
 | Zahl+Buchstabe(n) (Parameter) | 300He, 300N2 | Zahl + 1–3 Zeichen → key=value; He/N2/CO2 = Gasanteil in % |
-| Nur Buchstaben (2–3 Zeichen) | FF | String-Parameter key=value (z.B. ff=ff) |
+| Durchfluss (slm) | 5slmAr, 10slmN2 | gas_flow (val, unit=slm, gas) |
+| Nur Buchstaben (2–4 Zeichen) | FF, KPSc | String-Parameter key=value (z.B. ff=ff) |
 | Laufnummer / Frame (nur Ziffern) | 000, 001, 040, 165 | frame (als Integer, 3+ Ziffern) |
 | Sequenz/Session (1–2 Ziffern) | 07 in 10mm_07 | seq (z.B. Session-Nr. bei identischen Werten) |
-| Kamera/Channel | cam1, channel2 | camera, channel |
+| Kamera/Channel | cam1, channel2, C1, C2, C3 | camera, channel |
 | key=value | beliebig | als Key-Value gespeichert |
 | Processing-Tags | raw, dark, flat, avg, … | processing (Liste) |
 | Modality | rgb, ir, thermal, … | modality (ueber MODALITY_MAP) |

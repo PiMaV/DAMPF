@@ -30,6 +30,7 @@ from key_lut import (
     format_val_unit,
     get_category,
     get_display_name,
+    get_display_value,
     get_unit_info,
     is_quantitative_val,
     SI_BASE_UNIT,
@@ -171,7 +172,7 @@ def _compute_legend_key_order(rows: list, detected_keys: list, root_dir: str | N
             key_positions.setdefault(k, []).append(s / line_len)
         for s, e, k in file_seg:
             key_positions.setdefault(k, []).append((offset_file + s) / line_len)
-    order = sorted(key_positions.keys(), key=lambda k: sum(key_positions[k]) / len(key_positions[k]))
+    order = sorted(key_positions.keys(), key=lambda k: max(key_positions[k]))
     return order + [k for k in detected_keys if k not in order]
 
 
@@ -198,6 +199,45 @@ def _gaps_from_segments(segs: list, line_len: int) -> list[tuple[int, int]]:
     return gaps
 
 
+def _split_gap_into_segment_types(line: str, gap_start: int, gap_end: int) -> list[tuple[int, int, str]]:
+    """Split gap into (start, end, type) where type is 'filetype', 'separator', 'rest'.
+    filetype: extension at end of line. separator: runs of -, _, /, \\. rest: everything else (grey).
+    """
+    text = line[gap_start:gap_end]
+    line_len = len(line)
+    result: list[tuple[int, int, str]] = []
+
+    # filetype: only if gap reaches end of line and ends with .ext
+    if gap_end == line_len:
+        ext_match = re.search(r"(\.[a-zA-Z0-9]+)$", text)
+        if ext_match:
+            ext_start = gap_start + ext_match.start(1)
+            if ext_match.start(1) > 0:
+                result.extend(_split_gap_into_segment_types(line, gap_start, ext_start))
+            result.append((ext_start, gap_end, "filetype"))
+            return result
+
+    # Split into separator runs and rest (separators: - _ / \)
+    sep_pat = r"[-_/\\]+"
+    i = 0
+    while i < len(text):
+        m = re.match(sep_pat, text[i:])
+        if m:
+            run_len = len(m.group())
+            result.append((gap_start + i, gap_start + i + run_len, "separator"))
+            i += run_len
+        else:
+            m_next = re.search(sep_pat, text[i:])
+            if m_next:
+                j = i + m_next.start()
+                result.append((gap_start + i, gap_start + j, "rest"))
+                i = j
+            else:
+                result.append((gap_start + i, gap_end, "rest"))
+                break
+    return result
+
+
 def _apply_custom_token_map(rows: list, custom_token_map: dict) -> None:
     """In-place: add custom_token_map entries to row data and token_to_key."""
     if not custom_token_map:
@@ -219,6 +259,53 @@ def _apply_custom_token_map(rows: list, custom_token_map: dict) -> None:
                 file_ttk[tok] = key
         row["_folder_token_to_key"] = folder_ttk
         row["_file_token_to_key"] = file_ttk
+
+
+def _token_to_pattern(mapped_token: str) -> str | None:
+    """Generate regex pattern from mapped token to match similar tokens. Returns None if no pattern."""
+    t = mapped_token.lower().strip()
+    if not t:
+        return None
+    # All digits: 00000 -> ^\d{5}$
+    if re.fullmatch(r"\d+", t):
+        return f"^\\d{{{len(t)}}}$"
+    # Letters + digits: c1, gain150 -> ^c\d+$, ^gain\d+$
+    m = re.match(r"^([a-z]+)(\d+)$", t)
+    if m:
+        return f"^{re.escape(m.group(1))}\\d+$"
+    # Digits + letters: 5slmar -> ^\d+slmar$
+    m = re.match(r"^(\d+)([a-z][a-z0-9]*)$", t)
+    if m:
+        return f"^\\d+{re.escape(m.group(2))}$"
+    # Letters only, len>=4: synck, syncaa -> ^sync[a-z]*$
+    if len(t) >= 4 and t.isalpha():
+        return f"^{re.escape(t[:4])}[a-z]*$"
+    # Letters only, len 2-3: ff, sf -> exact only, no pattern (too broad)
+    return None
+
+
+def suggest_key_for_token(token: str, custom_token_map: dict) -> str | None:
+    """Suggest key for unrecognized token based on custom_token_map patterns. Returns first match."""
+    if not token or not custom_token_map:
+        return None
+    t = token.lower().strip()
+    for mapped_tok, key in custom_token_map.items():
+        pat = _token_to_pattern(mapped_tok)
+        if pat and re.fullmatch(pat, t):
+            return key
+    return None
+
+
+def get_batch_suggestions(
+    unrec_tokens: list[tuple[str, int]], custom_token_map: dict
+) -> list[tuple[str, str]]:
+    """Return [(token, suggested_key), ...] for tokens that have a suggestion."""
+    out: list[tuple[str, str]] = []
+    for tok, _cnt in unrec_tokens:
+        key = suggest_key_for_token(tok, custom_token_map)
+        if key:
+            out.append((tok, key))
+    return out
 
 
 def _collect_unrecognized_tokens(rows: list) -> list[tuple[str, int]]:
@@ -327,6 +414,7 @@ class DampfGui(QMainWindow):
         self._last_sample_rows: list = []
         self._legend_key_order: list = []
         self.custom_token_map: dict[str, str] = {}
+        self._refreshing_unrec_panel = False
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -604,6 +692,7 @@ class DampfGui(QMainWindow):
         self.unrec_token_combo.setEditable(False)
         self.unrec_token_combo.setMinimumWidth(140)
         self.unrec_token_combo.setToolTip("Unrecognized tokens from current data. Select one to map.")
+        self.unrec_token_combo.currentIndexChanged.connect(self._on_unrec_token_selected)
         unrec_row.addWidget(QLabel("Token:"))
         unrec_row.addWidget(self.unrec_token_combo)
         self.unrec_key_edit = QLineEdit()
@@ -621,9 +710,15 @@ class DampfGui(QMainWindow):
         self.unrec_mappings_list.setMaximumHeight(80)
         self.unrec_mappings_list.setToolTip("Current custom mappings. Right-click or use Remove to delete.")
         unrec_l.addWidget(self.unrec_mappings_list)
+        unrec_btn_row = QHBoxLayout()
         rm_map_btn = QPushButton("Remove selected", clicked=self._remove_custom_token_mapping)
         rm_map_btn.setToolTip("Remove selected mapping.")
-        unrec_l.addWidget(rm_map_btn)
+        batch_btn = QPushButton("Map all suggested", clicked=self._batch_map_suggested)
+        batch_btn.setToolTip("Map all unrecognized tokens that match existing patterns (e.g. C2,C3 like C1->channel).")
+        unrec_btn_row.addWidget(rm_map_btn)
+        unrec_btn_row.addWidget(batch_btn)
+        unrec_btn_row.addStretch()
+        unrec_l.addLayout(unrec_btn_row)
         results_l.addWidget(unrec_g)
 
         bottom_split.addWidget(results_g)
@@ -1158,7 +1253,8 @@ class DampfGui(QMainWindow):
                     unit_text = "-"
                 exp_to_show = si_exp if si_exp is not None else (unit_to_exponent(raw_u) if raw_u and has_unit else None)
                 si_text = f"10^{exp_to_show}" if exp_to_show is not None else ""
-                child = QTreeWidgetItem(cat_item, ["", f"{display_name}  [{key}]", stats_str, uniq_str, "", si_text, unit_text])
+                key_display = f"{display_name}  [{key}]" if display_name != key else key
+                child = QTreeWidgetItem(cat_item, ["", key_display, stats_str, uniq_str, "", si_text, unit_text])
                 child.setData(1, Qt.ItemDataRole.UserRole, key)
                 child.setData(5, Qt.ItemDataRole.UserRole, has_unit)
                 child.setData(6, Qt.ItemDataRole.UserRole, raw_u)
@@ -1235,18 +1331,19 @@ class DampfGui(QMainWindow):
             v = r.get(key)
             if v is None:
                 continue
-            if is_quantitative_val(v):
-                s = format_val_unit(v)
-            elif isinstance(v, list) and v and is_quantitative_val(v[0]):
-                s = ", ".join(format_val_unit(x) for x in v[:3])
-                if len(v) > 3:
+            v_display = get_display_value(v, r)
+            if is_quantitative_val(v_display):
+                s = format_val_unit(v_display)
+            elif isinstance(v_display, list) and v_display and is_quantitative_val(v_display[0]):
+                s = ", ".join(format_val_unit(x) for x in v_display[:3])
+                if len(v_display) > 3:
                     s += ", ..."
-            elif isinstance(v, (list, dict)):
-                s = json.dumps(v, sort_keys=True, default=str)[:50]
+            elif isinstance(v_display, (list, dict)):
+                s = json.dumps(v_display, sort_keys=True, default=str)[:50]
                 if len(s) >= 50:
                     s += "..."
             else:
-                s = str(v)
+                s = str(v_display)
             if s not in vals_seen:
                 vals_seen.add(s)
                 samples.append(s)
@@ -1295,19 +1392,39 @@ class DampfGui(QMainWindow):
 
     def _refresh_unrecognized_panel(self) -> None:
         """Populate unrecognized token combo and mappings list."""
-        self.unrec_token_combo.clear()
-        self.unrec_mappings_list.clear()
-        rows = getattr(self, "_all_rows", None) or []
-        if not rows:
+        self._refreshing_unrec_panel = True
+        try:
+            self.unrec_token_combo.clear()
+            self.unrec_mappings_list.clear()
+            rows = getattr(self, "_all_rows", None) or []
+            if not rows:
+                return
+            unrec = _collect_unrecognized_tokens(rows)
+            for tok, cnt in unrec:
+                self.unrec_token_combo.addItem(f"{tok} ({cnt})", tok)
+            for tok, key in sorted(self.custom_token_map.items(), key=lambda x: (x[1], x[0])):
+                it = QTreeWidgetItem([tok, key])
+                it.setData(0, Qt.ItemDataRole.UserRole, tok)
+                it.setData(1, Qt.ItemDataRole.UserRole, key)
+                self.unrec_mappings_list.addTopLevelItem(it)
+        finally:
+            self._refreshing_unrec_panel = False
+        self._on_unrec_token_selected()
+
+    def _on_unrec_token_selected(self) -> None:
+        """When token selected, pre-fill key edit with suggestion from custom_token_map patterns."""
+        if getattr(self, "_refreshing_unrec_panel", False):
             return
-        unrec = _collect_unrecognized_tokens(rows)
-        for tok, cnt in unrec:
-            self.unrec_token_combo.addItem(f"{tok} ({cnt})", tok)
-        for tok, key in sorted(self.custom_token_map.items(), key=lambda x: (x[1], x[0])):
-            it = QTreeWidgetItem([tok, key])
-            it.setData(0, Qt.ItemDataRole.UserRole, tok)
-            it.setData(1, Qt.ItemDataRole.UserRole, key)
-            self.unrec_mappings_list.addTopLevelItem(it)
+        idx = self.unrec_token_combo.currentIndex()
+        if idx < 0:
+            self.unrec_key_edit.clear()
+            return
+        tok = self.unrec_token_combo.itemData(idx)
+        if not tok:
+            return
+        suggested = suggest_key_for_token(str(tok), self.custom_token_map)
+        self.unrec_key_edit.setText(suggested or "")
+        self.unrec_key_edit.setPlaceholderText("key name" + (f" (suggested: {suggested})" if suggested else ""))
 
     def _add_custom_token_mapping(self) -> None:
         """Add token -> key mapping and refresh."""
@@ -1324,6 +1441,38 @@ class DampfGui(QMainWindow):
         self._show_nomenclature()
         self._refresh_unrecognized_panel()
         self.unrec_key_edit.clear()
+
+    def _batch_map_suggested(self) -> None:
+        """Map all unrecognized tokens that have a suggestion from existing patterns."""
+        rows = getattr(self, "_all_rows", None) or []
+        if not rows:
+            return
+        unrec = _collect_unrecognized_tokens(rows)
+        batch = get_batch_suggestions(unrec, self.custom_token_map)
+        if not batch:
+            QMessageBox.information(
+                self,
+                "Map all suggested",
+                "No unrecognized tokens match existing patterns. Add at least one mapping first (e.g. C1 -> channel).",
+            )
+            return
+        n = len(batch)
+        ok = QMessageBox.question(
+            self,
+            "Map all suggested",
+            f"Map {n} token(s) to their suggested keys?\n\n" + "\n".join(f"  {t} -> {k}" for t, k in batch[:10]) + ("\n  ..." if n > 10 else ""),
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Ok,
+        )
+        if ok != QMessageBox.StandardButton.Ok:
+            return
+        for tok, key in batch:
+            self.custom_token_map[str(tok)] = key
+        _apply_custom_token_map(self._all_rows, self.custom_token_map)
+        self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), self._folder_includes)
+        self._show_nomenclature()
+        self._refresh_unrecognized_panel()
+        QMessageBox.information(self, "Map all suggested", f"Mapped {n} token(s).")
 
     def _remove_custom_token_mapping(self) -> None:
         """Remove selected mapping and refresh."""
@@ -1421,15 +1570,17 @@ class DampfGui(QMainWindow):
             label = f"({k})" if not present else k
             legend_parts.append(f'<span style="background-color:{base}; padding:0 4px;"> {label} </span>')
         unrec_color = "#e0e0e0" if self.light_mode_cb.isChecked() else "#505050"
-        legend_parts.append(f'<span style="background-color:{unrec_color}; padding:0 4px;"> unrecognized </span>')
+        neutral_color = "#f0f0f0" if self.light_mode_cb.isChecked() else "#404040"
+        legend_parts.append(f'<span style="background-color:{neutral_color}; padding:0 4px;"> filetype </span>')
+        legend_parts.append(f'<span style="background-color:{neutral_color}; padding:0 4px;"> separator </span>')
+        legend_parts.append(f'<span style="background-color:{unrec_color}; padding:0 4px;"> rest </span>')
         self.color_legend.setTextFormat(Qt.TextFormat.RichText)
-        rec_part = "  ".join(legend_parts[:-1]) if len(legend_parts) > 1 else ""
-        unrec_part = legend_parts[-1] if legend_parts else ""
-        leg = ("Recognized: " + rec_part + "  |  " + unrec_part) if legend_parts else ""
+        rec_part = "  ".join(legend_parts[:-3]) if len(legend_parts) > 3 else ""
+        meta_part = "  ".join(legend_parts[-3:])
+        leg = ("Recognized: " + rec_part + "  |  " + meta_part) if legend_parts else ""
         self.color_legend.setText(leg)
         self.color_legend.setToolTip(
-            "Recognized: parameters from Proper_file_naming scheme. "
-            "Unrecognized: parts of path not in scheme (full information space visible)."
+            "Parameters (colored), filetype (extension), separator (- _ / \\), rest (unmapped)."
         )
         full = "\n".join(lines)
         self.path_overview.setPlainText(full)
@@ -1438,12 +1589,14 @@ class DampfGui(QMainWindow):
         for i, line in enumerate(lines):
             segs = segs_per_line[i]
             gaps = _gaps_from_segments(segs, len(line))
-            for start, end in gaps:
-                fmt = QTextCharFormat()
-                fmt.setBackground(QColor(unrec_color))
-                cursor.setPosition(pos + start)
-                cursor.setPosition(pos + end, cursor.MoveMode.KeepAnchor)
-                cursor.setCharFormat(fmt)
+            for gap_start, gap_end in gaps:
+                for start, end, seg_type in _split_gap_into_segment_types(line, gap_start, gap_end):
+                    if seg_type == "rest":
+                        fmt = QTextCharFormat()
+                        fmt.setBackground(QColor(unrec_color))
+                        cursor.setPosition(pos + start)
+                        cursor.setPosition(pos + end, cursor.MoveMode.KeepAnchor)
+                        cursor.setCharFormat(fmt)
             for start, end, key, in_folder in segs:
                 fmt = QTextCharFormat()
                 base = key_to_color.get(key, "#ccc")

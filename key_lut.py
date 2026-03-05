@@ -17,6 +17,7 @@ UNITS_LUT: Dict[str, Tuple[str, Tuple[str, ...], str]] = {
     "lengths": ("m", ("nm", "um", "mm", "cm", "m", "px"), "Length"),
     "temperature": ("C", ("C", "K"), "Temperature"),
     "gas_pct": ("%", ("%",), "Gas"),  # He, N2, CO2 etc.
+    "gas_flow": ("slm", ("slm",), "Gas flow"),  # 5slmAr, 10slmN2
 }
 
 # Gas keys (Zahl+Buchstabe wie 300He, 300N2) -> unit %
@@ -77,6 +78,7 @@ SI_BASE_UNIT: Dict[str, str] = {
     "he": "%",
     "n2": "%",
     "co2": "%",
+    "gas_flow": "slm",
 }
 
 # Key -> category label (for tree grouping). User can extend via project.json "key_categories".
@@ -100,6 +102,7 @@ DEFAULT_KEY_CATEGORIES: Dict[str, str] = {
     "he": "Gas",
     "n2": "Gas",
     "co2": "Gas",
+    "gas_flow": "Gas",
     "experiment": "Experiment",
     "sample": "Sample",
     "seq": "Sequence",
@@ -119,6 +122,7 @@ DEFAULT_KEY_DISPLAY_NAMES: Dict[str, str] = {
     "he": "He (%)",
     "n2": "N2 (%)",
     "co2": "CO2 (%)",
+    "gas_flow": "Gas flow (slm)",
     "m": "Parameter M",
     "ff": "FF",
     "frame": "Frame",
@@ -184,6 +188,15 @@ def extract_val_for_export(v: Any) -> Any:
     return v
 
 
+def get_display_value(value: Any, row: Optional[Dict[str, Any]] = None) -> Any:
+    """Fuer Anzeige/Export: Original-Case nutzen wenn row._token_original vorhanden."""
+    if row is not None and isinstance(value, str):
+        orig = row.get("_token_original") or {}
+        if value in orig:
+            return orig[value]
+    return value
+
+
 def get_export_value_and_metadata(
     v: Any,
     key: str,
@@ -210,10 +223,12 @@ def get_export_value_and_metadata(
 
 
 def format_val_unit(v: Any) -> str:
-    """Formatierung fuer Anzeige: '500 us' oder einfacher Wert."""
+    """Formatierung fuer Anzeige: '500 us' oder '5 slm Ar'."""
     if is_quantitative_val(v):
         val, unit = v.get("val"), v.get("unit", "")
-        return f"{val} {unit}" if unit else str(val)
+        gas = v.get("gas", "")
+        base = f"{val} {unit}" if unit else str(val)
+        return f"{base} {gas}" if gas else base
     return str(v) if v is not None else ""
 
 
