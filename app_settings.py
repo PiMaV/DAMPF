@@ -16,11 +16,11 @@ def _get_settings_path() -> Path:
 
 DEFAULT_INI = """
 [dampf]
-; Window: max width 800px, fit Full HD (1080px) vertically
-width = 780
-height = 980
+; Window: target 800x1000 for laptop/Full HD with taskbar
+width = 800
+height = 1000
 max_width = 800
-max_height = 1080
+max_height = 1000
 
 [paths]
 root_dir =
@@ -33,10 +33,10 @@ def load_settings() -> dict:
     """Load dampf.ini. Returns dict with width, height, max_width, max_height, light_mode, paths."""
     p = _get_settings_path()
     out = {
-        "width": 780,
-        "height": 980,
+        "width": 800,
+        "height": 1000,
         "max_width": 800,
-        "max_height": 1080,
+        "max_height": 1000,
         "light_mode": True,
         "splitter_sizes": "",
         "main_splitter_sizes": "",
@@ -93,7 +93,7 @@ def save_settings(
         "width": str(width),
         "height": str(height),
         "max_width": "800",
-        "max_height": "1080",
+        "max_height": "1000",
         "light_mode": "true" if light_mode else "false",
     }
     if splitter_sizes:

@@ -75,6 +75,7 @@ Pipeline:
 - **Starten:** `python gui.py` oder `dist\DAMPF.exe` (nach Build).
 - **Ablauf:** Root-Ordner waehlen → Crawl starten → Nomenklatur prufen/anpassen → Schema speichern (project.json/ini) und/oder In Datenbank speichern (SQLite).
 - **Schema:** Erkannte Struktur als project.json (oder project.ini) speichern; beliebigen anderen Root „gemaess Schema“ laden und erneut crawlen.
+- **Detected keys (4.):** Zwei Spalten: „Display name“ = Label in Exporten (Doppelklick zum Aendern), „Key“ = interner Parametername aus dem Parsing (nur Lesen).
 - **EXE bauen:** `pyinstaller DAMPF.spec` → `dist\DAMPF.exe` (ein Datei, keine Python-Installation noetig).
 - Ausgabe (SQLite, JSONL/CSV) ist fuer **Wolke** (Dash/Plotly, SQL) und **Blitz** (Image Viewer) nutzbar.
 

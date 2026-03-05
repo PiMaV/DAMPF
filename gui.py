@@ -66,7 +66,7 @@ STYLESHEET_LIGHT = """
     QLineEdit, QTextEdit, QComboBox, QSpinBox { background-color: #ffffff; color: #202124; border: 1px solid #dadce0; }
     QTreeWidget { background-color: #ffffff; color: #202124; }
     QFrame#workflow_header { background-color: #f5f5f5; border-radius: 4px; }
-    QLabel#simple_hint { background-color: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; padding: 4px 8px; font-size: 11px; }
+    QLabel#drag_drop_hint { color: #1976d2; font-size: 11px; }
     QGroupBox#root_folder_g { border: 2px dashed #90caf9; border-radius: 4px; padding: 8px; }
 """
 STYLESHEET_DARK = """
@@ -75,7 +75,7 @@ STYLESHEET_DARK = """
     QLineEdit, QTextEdit, QComboBox, QSpinBox { background-color: #1e2127; color: #e6edf3; border: 1px solid #444c56; }
     QTreeWidget { background-color: #1e2127; color: #e6edf3; }
     QFrame#workflow_header { background-color: #252a33; border-radius: 4px; }
-    QLabel#simple_hint { background-color: #1e3a5f; border: 1px solid #1976d2; border-radius: 4px; padding: 4px 8px; font-size: 11px; }
+    QLabel#drag_drop_hint { color: #64b5f6; font-size: 11px; }
     QGroupBox#root_folder_g { border: 2px dashed #1976d2; border-radius: 4px; padding: 8px; }
 """
 
@@ -87,16 +87,24 @@ def _row_folder(r: dict) -> str:
     return folder if folder != "." else ""
 
 
-def _build_folder_tree(rows: list) -> dict:
-    """Build {path: count} for each folder (dirname of relpath). path uses /."""
+def _build_folder_tree(rows: list) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
+    """Build per-folder counts and per-folder per-extension counts. path uses /.
+    Returns (by_folder, by_folder_ext) with by_folder_ext[path][ext] = count."""
     by_folder: dict[str, int] = {}
+    by_folder_ext: dict[str, dict[str, int]] = {}
     for r in rows:
         rel = r.get("relpath", "")
         folder = str(Path(rel).parent).replace("\\", "/") if rel else ""
         if folder == ".":
             folder = ""
+        ext = r.get("ext") or ""
+        if ext and not ext.startswith("."):
+            ext = "." + ext
         by_folder[folder] = by_folder.get(folder, 0) + 1
-    return by_folder
+        if folder not in by_folder_ext:
+            by_folder_ext[folder] = {}
+        by_folder_ext[folder][ext] = by_folder_ext[folder].get(ext, 0) + 1
+    return by_folder, by_folder_ext
 
 
 _ROW_META_KEYS = frozenset(
@@ -106,7 +114,7 @@ _ROW_META_KEYS = frozenset(
 
 
 def _key_stats(rows: list, keys: list) -> dict:
-    """Per key: uniques, numeric -> min/max, else None. Returns {key: {"uniques": N, "min": x, "max": y}}."""
+    """Per key: uniques, numeric -> min/max/mean, else None. Returns {key: {"uniques": N, "min": x, "max": y, "mean": z}}."""
     import json as _json
     stats: dict = {}
     for k in keys:
@@ -126,7 +134,10 @@ def _key_stats(rows: list, keys: list) -> dict:
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
                     nums.append(float(v))
             vals.append(vn)
-        stats[k] = {"uniques": len(set(vals)), "min": min(nums) if nums else None, "max": max(nums) if nums else None}
+        mn = min(nums) if nums else None
+        mx = max(nums) if nums else None
+        mean = (sum(nums) / len(nums)) if nums else None
+        stats[k] = {"uniques": len(set(vals)), "min": mn, "max": mx, "mean": mean}
     return stats
 
 
@@ -153,26 +164,112 @@ def _filter_to_dominant_suffix(rows: list) -> list:
     return [r for r in rows if r.get("ext") == dominant_ext] or rows
 
 
+def _build_pseudopath_from_rows(
+    rows: list,
+    root_dir: str | None,
+    legend_order: list,
+    sep: str,
+    key_to_color: dict,
+    neutral_color: str,
+    unrec_color: str,
+) -> str:
+    """Build one pseudo-path from actual paths: key names, (key) where key is not in all paths. Return HTML."""
+    if not rows or not legend_order:
+        return ""
+    keys_ordered = [k for k in legend_order if k not in ("filetype", "separator", "rest")]
+    if not keys_ordered:
+        return ""
+
+    rows_with_key: dict[str, int] = {}
+    rows_with_key_in_folder: dict[str, int] = {}
+    rows_with_key_in_file: dict[str, int] = {}
+    folder_positions: dict[str, list[float]] = {}
+    file_positions: dict[str, list[float]] = {}
+    file_has_space_before: dict[str, bool] = {}
+
+    for r in rows:
+        _, folder_str, file_str, folder_seg, file_seg, _ = _build_path_segments(r, root_dir)
+        folder_len = max(1, len(folder_str))
+        file_len = max(1, len(file_str))
+        keys_in_row = set()
+        for _s, _e, k in folder_seg:
+            keys_in_row.add(k)
+            rows_with_key_in_folder[k] = rows_with_key_in_folder.get(k, 0) + 1
+            folder_positions.setdefault(k, []).append(_s / folder_len)
+        for _s, _e, k in file_seg:
+            keys_in_row.add(k)
+            rows_with_key_in_file[k] = rows_with_key_in_file.get(k, 0) + 1
+            file_positions.setdefault(k, []).append(_s / file_len)
+            if _s > 0 and file_str[_s - 1 : _s].isspace():
+                file_has_space_before[k] = True
+        for k in keys_in_row:
+            rows_with_key[k] = rows_with_key.get(k, 0) + 1
+
+    keys_in_folder = set(folder_positions.keys())
+    keys_in_file = set(file_positions.keys())
+    order_idx = {k: i for i, k in enumerate(keys_ordered)}
+    folder_key_order = sorted(
+        keys_in_folder,
+        key=lambda k: (sum(folder_positions[k]) / len(folder_positions[k]), order_idx.get(k, 999), k),
+    )
+    file_key_order = sorted(
+        keys_in_file,
+        key=lambda k: (sum(file_positions[k]) / len(file_positions[k]), order_idx.get(k, 999), k),
+    )
+
+    n_rows = len(rows)
+    def label(key: str, in_folder: bool) -> str:
+        count_here = rows_with_key_in_folder.get(key, 0) if in_folder else rows_with_key_in_file.get(key, 0)
+        return f"({key})" if count_here < n_rows else key
+
+    segs: list[tuple[str, str | None]] = []
+    for i, k in enumerate(folder_key_order):
+        if i > 0:
+            segs.append(("_", None))
+        segs.append((label(k, True), k))
+    if folder_key_order:
+        segs.append((sep, None))
+    for i, k in enumerate(file_key_order):
+        if i > 0:
+            segs.append((" " if file_has_space_before.get(k) else "_", None))
+        segs.append((label(k, False), k))
+    segs.append((".filetype", None))
+
+    out = []
+    for text, key in segs:
+        if key is None or key == "filetype":
+            out.append(f'<span style="background-color:{neutral_color}; padding:0 1px;">{text}</span>')
+        else:
+            c = key_to_color.get(key, unrec_color)
+            out.append(f'<span style="background-color:{c}; padding:0 1px;">{text}</span>')
+    return "".join(out)
+
+
 def _compute_legend_key_order(rows: list, detected_keys: list, root_dir: str | None) -> list:
-    """Stable order by typical position in path (left-to-right). Uses avg normalized position."""
+    """Stable order by rightmost position in path (left-to-right). Position only, no value logic."""
     if not rows or not detected_keys:
         return list(detected_keys)
+    sep = "\\" if any("\\" in str(r.get("relpath", "")) for r in rows) else "/"
     sample_size = 500
     use_rows = rows if len(rows) <= sample_size else [rows[i * len(rows) // sample_size] for i in range(sample_size)]
+    def keys_in_row(r):
+        all_ttk = {**(r.get("_folder_token_to_key") or {}), **(r.get("_file_token_to_key") or {})}
+        return set(all_ttk.values())
+    max_keys = max(len(keys_in_row(r)) for r in use_rows) if use_rows else 0
+    use_for_order = [r for r in use_rows if len(keys_in_row(r)) >= max_keys] if max_keys else use_rows
     key_positions: dict[str, list[float]] = {}
-    sep = "\\" if any("\\" in str(r.get("relpath", "")) for r in use_rows) else "/"
-    for r in use_rows:
-        _, folder_str, file_str, folder_seg, file_seg, _ = _build_path_segments(r, root_dir)
-        rel = (folder_str + sep + file_str) if folder_str else file_str
+    for r in use_for_order:
+        rel = r.get("relpath", "")
         if not rel:
-            rel = r.get("relpath", "")
+            _, folder_str, file_str, _, _, _ = _build_path_segments(r, root_dir)
+            rel = (folder_str + sep + file_str) if folder_str else file_str
+        rel = rel.replace("/", sep).replace("\\", sep)
         line_len = max(1, len(rel))
-        offset_file = len(folder_str) + len(sep) if folder_str else 0
-        for s, e, k in folder_seg:
-            key_positions.setdefault(k, []).append(s / line_len)
-        for s, e, k in file_seg:
-            key_positions.setdefault(k, []).append((offset_file + s) / line_len)
-    order = sorted(key_positions.keys(), key=lambda k: max(key_positions[k]))
+        all_ttk = {**(r.get("_folder_token_to_key") or {}), **(r.get("_file_token_to_key") or {})}
+        for token, key in all_ttk.items():
+            for m in re.finditer(re.escape(token), rel, re.IGNORECASE):
+                key_positions.setdefault(key, []).append(m.end() / line_len)
+    order = sorted(key_positions.keys(), key=lambda k: (max(key_positions[k]), k))
     return order + [k for k in detected_keys if k not in order]
 
 
@@ -217,8 +314,8 @@ def _split_gap_into_segment_types(line: str, gap_start: int, gap_end: int) -> li
             result.append((ext_start, gap_end, "filetype"))
             return result
 
-    # Split into separator runs and rest (separators: - _ / \)
-    sep_pat = r"[-_/\\]+"
+    # Split into separator runs and rest (separators: - _ / \ space)
+    sep_pat = r"[-_/\\\s]+"
     i = 0
     while i < len(text):
         m = re.match(sep_pat, text[i:])
@@ -383,8 +480,9 @@ class DampfGui(QMainWindow):
         super().__init__()
         self.setWindowTitle("DAMPF - Filename Semantic Indexer")
         settings = load_settings()
+        # Default 800x1000 for laptop/Full HD; saved size from INI is used when present
         self.resize(settings["width"], settings["height"])
-        self.setMinimumSize(560, 480)
+        self.setMinimumSize(640, 600)
 
         self.root_dir = settings.get("root_dir", "")
         self.output_dir = settings.get("output_dir", "")
@@ -422,39 +520,24 @@ class DampfGui(QMainWindow):
         main.setSpacing(6)
         main.setContentsMargins(8, 8, 8, 8)
 
-        # Workflow steps (visible guidance) – header block with subtle separation
-        workflow_header = QFrame()
-        workflow_header.setObjectName("workflow_header")
-        workflow_header_l = QVBoxLayout(workflow_header)
-        workflow_header_l.setSpacing(2)
-        workflow_header_l.setContentsMargins(8, 6, 8, 6)
-        steps = QLabel(
-            "1.) Select folder   |   2.) Crawl   |   3.) Include/exclude folders   |   "
-            "4.) Check keys   |   5.) Results   |   6.) Save / Log"
-        )
-        steps.setStyleSheet("font-weight: bold;")
-        steps.setWordWrap(True)
-        steps.setToolTip("Workflow: 1) Pick data folder  2) Crawl  3) Exclude folders  4) Check keys  5) Results  6) Save or export.")
-        workflow_header_l.addWidget(steps)
-        simple_hint = QLabel("Simple: drag & drop root folder -> Start Crawl -> Save to DB")
-        simple_hint.setObjectName("simple_hint")
-        simple_hint.setToolTip("Quick path: drop folder, click Start Crawl, then Save to DB.")
-        workflow_header_l.addWidget(simple_hint)
-        self._workflow_header = workflow_header
-        self._simple_hint = simple_hint
-
-        # Top section (1-3): workflow, root, crawl, include folders – collapsible via splitter
+        # Top section (1-3): root, crawl, include folders (collapsible)
         top_section = QWidget()
+        top_section.setMinimumHeight(40)
+        self._top_section = top_section
         top_section_l = QVBoxLayout(top_section)
-        top_section_l.setSpacing(6)
+        top_section_l.setSpacing(3)
         top_section_l.setContentsMargins(0, 0, 0, 0)
-        top_section_l.addWidget(workflow_header)
+        self._top_section_content = QWidget()
+        top_content_l = QVBoxLayout(self._top_section_content)
+        top_content_l.setContentsMargins(0, 0, 0, 0)
+        top_content_l.setSpacing(3)
 
-        # Root
+        # Root (compact: one row)
         root_g = QGroupBox("1. Root Folder")
         root_g.setObjectName("root_folder_g")
         root_g.setToolTip("Folder containing your files. Drag & drop a folder here or use Browse. DAMPF scans filenames and paths for parameters.")
         root_l = QHBoxLayout(root_g)
+        root_l.setSpacing(6)
         self.root_edit = QLineEdit()
         self.root_edit.setObjectName("root_edit")
         self.root_edit.setPlaceholderText("Select or drop folder")
@@ -465,18 +548,16 @@ class DampfGui(QMainWindow):
         browse_root_btn = QPushButton("Browse...", clicked=self._browse_root)
         browse_root_btn.setToolTip("Select root folder in file dialog.")
         root_l.addWidget(browse_root_btn)
-        cb_col = QVBoxLayout()
-        self.advanced_check = QCheckBox("Show output & DB")
-        self.advanced_check.setToolTip("Show Output folder and Database path (for export and SQLite).")
-        self.advanced_check.toggled.connect(self._toggle_advanced)
-        cb_col.addWidget(self.advanced_check)
         self.light_mode_cb = QCheckBox("Light mode")
         self.light_mode_cb.setToolTip("Light theme when checked, dark theme when unchecked.")
         self.light_mode_cb.setChecked(settings.get("light_mode", True))
         self.light_mode_cb.toggled.connect(self._apply_theme)
-        cb_col.addWidget(self.light_mode_cb)
-        root_l.addLayout(cb_col)
-        top_section_l.addWidget(root_g)
+        root_l.addWidget(self.light_mode_cb)
+        self.advanced_check = QCheckBox("Show output & DB")
+        self.advanced_check.setToolTip("Show Output folder and Database path (for export and SQLite).")
+        self.advanced_check.toggled.connect(self._toggle_advanced)
+        root_l.addWidget(self.advanced_check)
+        top_content_l.addWidget(root_g)
 
         # Advanced (hidden by default)
         self.advanced_w = QWidget()
@@ -497,49 +578,54 @@ class DampfGui(QMainWindow):
         browse_db_btn = QPushButton("Browse", clicked=self._browse_db)
         browse_db_btn.setToolTip("Choose where to save the SQLite database.")
         adv_l.addWidget(browse_db_btn, 1, 2)
-        top_section_l.addWidget(self.advanced_w)
+        top_content_l.addWidget(self.advanced_w)
         self.advanced_w.hide()
 
-        # Crawl
+        # Crawl (one row: button, progress, checkboxes, depth spinner; then group keys with explanation)
         crawl_g = QGroupBox("2. Crawl")
         crawl_g.setToolTip("Scan folder, extract parameters from filenames (e.g. 4kV, 10us, run1).")
         crawl_l = QVBoxLayout(crawl_g)
+        crawl_l.setSpacing(4)
         row1 = QHBoxLayout()
         self.crawl_btn = QPushButton("Start Crawl", clicked=self._start_crawl)
         self.crawl_btn.setToolTip("Scan root folder and detect parameters in paths/filenames.")
         self.progress_label = QLabel("")
         row1.addWidget(self.crawl_btn)
         row1.addWidget(self.progress_label)
-        row1.addStretch()
-        crawl_l.addLayout(row1)
-        row2 = QHBoxLayout()
+        row1.addWidget(QLabel(" "))
         self.recursive_cb = QCheckBox("Recursive")
         self.recursive_cb.setChecked(True)
         self.recursive_cb.setToolTip("Scan subfolders. Uncheck to index only root folder.")
         self.include_hidden_cb = QCheckBox("Include hidden")
         self.include_hidden_cb.setToolTip("Include files/folders with hidden attribute.")
-        row2.addWidget(self.recursive_cb)
-        row2.addWidget(self.include_hidden_cb)
-        depth_label = QLabel("Folder depth:")
+        row1.addWidget(self.recursive_cb)
+        row1.addWidget(self.include_hidden_cb)
+        depth_label = QLabel("Depth:")
         depth_label.setToolTip("Max folder depth for tokenization. 0=root only, 99=all levels.")
-        row2.addWidget(depth_label)
+        row1.addWidget(depth_label)
         self.depth_spin = QSpinBox()
         self.depth_spin.setRange(0, 99)
         self.depth_spin.setValue(99)
         self.depth_spin.setToolTip("Max folder depth for parameter extraction. 99 = no limit.")
-        row2.addWidget(self.depth_spin)
-        row2.addStretch()
-        crawl_l.addLayout(row2)
+        row1.addWidget(self.depth_spin)
+        row1.addStretch()
+        crawl_l.addLayout(row1)
         gk_row = QHBoxLayout()
-        gk_label = QLabel("Group keys:")
-        gk_label.setToolTip("Keys that define a logical group (e.g. date+experiment+sample). Auto-suggested after crawl. Used for DB grouping.")
+        gk_label = QLabel("Group keys (for DB / logical units):")
+        gk_label.setToolTip(
+            "Keys that together define one logical group (e.g. date + experiment + sample = one measurement run). "
+            "Used when writing to SQLite and for grouping in exports. Auto-suggested after crawl; you can leave as-is."
+        )
         gk_row.addWidget(gk_label)
         self.group_keys_edit = QLineEdit()
         self.group_keys_edit.setText(self.group_keys)
-        self.group_keys_edit.setPlaceholderText("auto-suggested after crawl; e.g. date, experiment, sample")
-        self.group_keys_edit.setToolTip("Comma-separated keys for grouping. Example: date, experiment, sample. Auto-filled after crawl.")
+        self.group_keys_edit.setPlaceholderText("e.g. date, experiment, sample")
+        self.group_keys_edit.setToolTip(
+            "Comma-separated keys that define a logical group. Used for DB and export structure. Auto-filled after crawl."
+        )
         gk_row.addWidget(self.group_keys_edit)
         crawl_l.addLayout(gk_row)
+        top_content_l.addWidget(crawl_g)
         ext_filter_row = QHBoxLayout()
         ext_filter_lbl = QLabel("Filter by type:")
         ext_filter_lbl.setToolTip(
@@ -553,7 +639,6 @@ class DampfGui(QMainWindow):
         ext_filter_row.addWidget(self.ext_filter_buttons_w)
         ext_filter_row.addStretch()
         crawl_l.addLayout(ext_filter_row)
-        top_section_l.addWidget(crawl_g)
 
         # Folder inclusion tree (after crawl)
         self.folder_tree_g = QGroupBox("3. Include folders (uncheck to exclude, changes apply immediately)")
@@ -564,20 +649,37 @@ class DampfGui(QMainWindow):
         self.folder_tree_w = QTreeWidget()
         self.folder_tree_w.setHeaderLabels(["Idx", "Include", "Folder", "Files"])
         self.folder_tree_w.setToolTip("Uncheck folders to exclude from index (e.g. RESULTS, output). Changes apply immediately.")
-        self.folder_tree_w.setMinimumHeight(60)
-        self.folder_tree_w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.folder_tree_w.setMinimumHeight(26)
+        self.folder_tree_w.setMaximumHeight(180)
+        self.folder_tree_w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.folder_tree_w.itemChanged.connect(self._on_folder_check_changed)
         folder_tree_l.addWidget(self.folder_tree_w, 1)  # stretch 1 = 80%+
         suggest_btn = QPushButton("Suggest exclude (RESULTS, output, ...)", clicked=self._suggest_exclude)
         suggest_btn.setToolTip("Auto-uncheck folders with names like results, output, processed, temp, etc.")
         folder_tree_l.addWidget(suggest_btn, 0)
-        top_section_l.addWidget(self.folder_tree_g, 1)
+        self._collapse_top_btn = QPushButton("\u25B2 Collapse 1-3 for better view", clicked=self._toggle_top_section)
+        self._collapse_top_btn.setToolTip("Collapse Root, Crawl, Include folders to get more space for keys and results.")
+        self._collapse_top_btn.setMinimumWidth(260)
+        self._collapse_top_btn.setStyleSheet("font-weight: bold; padding: 6px 12px;")
+        folder_tree_l.addWidget(self._collapse_top_btn, 0)
+        top_content_l.addWidget(self.folder_tree_g, 1)
+        self._expand_bar = QFrame()
+        self._expand_bar.setFrameShape(QFrame.Shape.NoFrame)
+        expand_l = QHBoxLayout(self._expand_bar)
+        expand_l.setContentsMargins(0, 0, 0, 0)
+        expand_l.setSpacing(0)
+        expand_btn = QPushButton("\u25BC Expand 1-3", clicked=self._toggle_top_section)
+        expand_btn.setToolTip("Show Root, Crawl, Include folders again.")
+        expand_btn.setMinimumWidth(260)
+        expand_btn.setStyleSheet("font-weight: bold; padding: 6px 12px;")
+        expand_l.addWidget(expand_btn)
+        self._expand_bar.hide()
+        top_section_l.addWidget(self._top_section_content, 1)
+        top_section_l.addWidget(self._expand_bar, 0)
 
-        # Bottom splitter: 4. Detected keys | 5. Results
-        bottom_split = QSplitter(Qt.Orientation.Vertical)
-
-        # 4. Detected keys
-        struct_g = QGroupBox("4. Detected keys")
+        # 4. Detected keys (title updated with file count)
+        struct_g = QGroupBox("4. Detected keys (0 files)")
+        self.struct_g = struct_g
         struct_g.setToolTip("Parameters extracted from filenames. Check Used to include in export; set Cat for categorical; edit SI exp for unit scaling.")
         struct_g.setStyleSheet("QGroupBox { font-size: 12px; padding-top: 8px; }")
         struct_l = QVBoxLayout(struct_g)
@@ -586,51 +688,47 @@ class DampfGui(QMainWindow):
         keys_top = QWidget()
         keys_top_ll = QVBoxLayout(keys_top)
         keys_top_ll.setContentsMargins(0, 0, 0, 0)
-        self.dup_label = QLabel("")
-        self.dup_label.setStyleSheet("font-size: 11px; padding: 2px 0;")
-        keys_top_ll.addWidget(self.dup_label)
-        self.schema_summary_label = QLabel("")
-        self.schema_summary_label.setStyleSheet("font-size: 11px; padding: 2px 0;")
-        self.schema_summary_label.setToolTip("File count and schema consistency. Outliers = files missing some parameters.")
-        keys_top_ll.addWidget(self.schema_summary_label)
-        incl_row = QHBoxLayout()
+        # One compact row: checkbox, warning/info, file count (dominant)
+        info_row = QHBoxLayout()
+        info_row.setSpacing(8)
         self.include_incomplete_cb = QCheckBox("Include incomplete (fill with empty)")
         self.include_incomplete_cb.setChecked(True)
         self.include_incomplete_cb.setToolTip("Checked: include all files, fill missing params with empty. Unchecked: only files with all parameters.")
         self.include_incomplete_cb.toggled.connect(self._on_include_incomplete_toggled)
-        incl_row.addWidget(self.include_incomplete_cb)
-        incl_row.addStretch()
-        keys_top_ll.addLayout(incl_row)
-        detected_keys_label = QLabel("Detected keys (click to edit display name; Cat = mark as categorical):")
-        detected_keys_label.setToolTip("Parameters found in filenames. Click to select; edit display name below. Cat=makes the parameter categorical (instead of numeric).")
+        info_row.addWidget(self.include_incomplete_cb)
+        self.dup_label = QLabel("")
+        self.dup_label.setStyleSheet("font-size: 10px; padding: 0 4px 0 0;")
+        self.dup_label.setWordWrap(False)
+        info_row.addWidget(self.dup_label)
+        self.schema_summary_label = QLabel("")
+        self.schema_summary_label.setStyleSheet("font-size: 11px; font-weight: bold; padding: 0 8px 0 0;")
+        self.schema_summary_label.setToolTip("Anzahl der Dateien. Pro Key: Spalte Full = wie viele den Key haben, (−X) = wie viele fehlen.")
+        info_row.addWidget(self.schema_summary_label, 1)
+        keys_top_ll.addLayout(info_row)
+        detected_keys_label = QLabel("Detected keys (double-click Key to edit display name; Cat = categorical):")
+        detected_keys_label.setToolTip(
+            "Parameters from filenames. Display name = label in exports (double-click to edit). Key = internal parameter name from parsing (read-only)."
+        )
         keys_top_ll.addWidget(detected_keys_label)
         self.key_tree = QTreeWidget()
-        self.key_tree.setHeaderLabels(["Used", "Key", "Stats", "Uniques", "Cat", "SI exp", "Unit"])
+        self.key_tree.setHeaderLabels(["Used", "Cat", "Uniques", "Full", "Display name", "Key", "SI exp", "Unit", "Min", "Max", "Mean"])
         self.key_tree.setMinimumHeight(200)
         self.key_tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.key_tree.setColumnWidth(0, 60)
-        self.key_tree.setColumnWidth(1, 200)
+        self.key_tree.setColumnWidth(0, 50)
+        self.key_tree.setColumnWidth(1, 50)
+        self.key_tree.setColumnWidth(4, 180)
+        self.key_tree.setColumnWidth(5, 80)
         self.key_tree.setStyleSheet("font-size: 11px;")
-        self.key_tree.setToolTip("Used=include in export. Cat=categorical. SI exp: 10^-6=us, 10^-3=m, 10^0=base, 10^6=M. Unit=result unit. Click key to edit display name.")
+        self.key_tree.setToolTip(
+            "Used=include in export. Display name=label in exports (double-click to edit). Key=internal parameter name (read-only). Full, Cat, SI exp, Unit."
+        )
         self.key_tree.itemSelectionChanged.connect(self._on_tree_select)
         self.key_tree.itemChanged.connect(self._on_key_tree_item_changed)
         keys_top_ll.addWidget(self.key_tree, 1)
-        key_edit_row = QHBoxLayout()
-        display_name_label = QLabel("Display name:")
-        display_name_label.setToolTip("Custom label for this parameter in exports.")
-        key_edit_row.addWidget(display_name_label)
-        self.key_display_edit = QLineEdit()
-        self.key_display_edit.setPlaceholderText("Select key in tree, then edit")
-        self.key_display_edit.setToolTip("Override parameter label in exports. Select key in tree, edit, then Apply.")
-        key_edit_row.addWidget(self.key_display_edit)
-        apply_btn = QPushButton("Apply", clicked=self._apply_display_name)
-        apply_btn.setToolTip("Apply display name to selected key.")
-        key_edit_row.addWidget(apply_btn)
-        reset_btn = QPushButton("Reset", clicked=self._reset_display_name)
-        reset_btn.setToolTip("Reset display name to default.")
-        key_edit_row.addWidget(reset_btn)
-        keys_top_ll.addLayout(key_edit_row)
         struct_l.addWidget(keys_top, 1)
+
+        # Bottom splitter: 4. Detected keys | 5. Results (vertical, resizable)
+        bottom_split = QSplitter(Qt.Orientation.Vertical)
         bottom_split.addWidget(struct_g)
 
         # 5. Results (path samples, extraction preview)
@@ -679,7 +777,7 @@ class DampfGui(QMainWindow):
         self.key_samples_label.setToolTip("Sample values for selected parameter. Click a key in the tree above.")
         results_l.addWidget(self.key_samples_label)
 
-        # Unrecognized -> Parameters panel
+        # Unrecognized -> Parameters panel (collapsible, collapsed by default – not yet fully functional)
         unrec_g = QGroupBox("Unrecognized → Parameters")
         unrec_g.setToolTip(
             "Gray = tokens the scheme does not know. Promote them here: Token → Key. "
@@ -719,12 +817,24 @@ class DampfGui(QMainWindow):
         unrec_btn_row.addWidget(batch_btn)
         unrec_btn_row.addStretch()
         unrec_l.addLayout(unrec_btn_row)
-        results_l.addWidget(unrec_g)
+        unrec_container = QWidget()
+        unrec_container_l = QVBoxLayout(unrec_container)
+        unrec_container_l.setContentsMargins(0, 0, 0, 0)
+        unrec_container_l.setSpacing(0)
+        self._unrec_toggle_btn = QPushButton("Unrecognized → Parameters (not yet functional) \u25BC", clicked=self._toggle_unrec_section)
+        self._unrec_toggle_btn.setToolTip("Expand to map unrecognized tokens to keys. Collapsed by default.")
+        self._unrec_toggle_btn.setStyleSheet("text-align: left; padding: 4px 8px;")
+        unrec_container_l.addWidget(self._unrec_toggle_btn)
+        unrec_container_l.addWidget(unrec_g)
+        self._unrec_g = unrec_g
+        self._unrec_section_visible = False
+        unrec_g.hide()
+        results_l.addWidget(unrec_container)
 
         bottom_split.addWidget(results_g)
-        bottom_split.setSizes([350, 250])
-        bottom_split.setStretchFactor(0, 3)
-        bottom_split.setStretchFactor(1, 1)
+        bottom_split.setSizes([280, 320])
+        bottom_split.setStretchFactor(0, 2)
+        bottom_split.setStretchFactor(1, 3)
         ms_sizes = settings.get("main_splitter_sizes", "")
         if ms_sizes:
             try:
@@ -735,66 +845,53 @@ class DampfGui(QMainWindow):
                 pass
         self.bottom_split = bottom_split
 
-        # Outer splitter: top (1-3) | bottom (4-5) – drag to give more space to keys/results
-        outer_split = QSplitter(Qt.Orientation.Vertical)
-        outer_split.addWidget(top_section)
-        outer_split.addWidget(bottom_split)
-        outer_split.setSizes([280, 520])
-        outer_split.setStretchFactor(0, 0)
-        outer_split.setStretchFactor(1, 1)
-        os_sizes = settings.get("outer_splitter_sizes", "")
-        if os_sizes:
-            try:
-                sizes = [int(x.strip()) for x in os_sizes.split(",") if x.strip()]
-                if len(sizes) >= 2:
-                    outer_split.setSizes(sizes)
-            except ValueError:
-                pass
-        self.outer_split = outer_split
-        main.addWidget(outer_split, 1)
+        # Minimum heights so panes don't collapse to one line at 800x1000
+        struct_g.setMinimumHeight(200)
+        results_g.setMinimumHeight(250)
+        # Scrollable middle block (4. Keys + 5. Results) for 800x1000 laptop view
+        middle_container = QWidget()
+        middle_container.setMinimumHeight(650)
+        middle_layout = QVBoxLayout(middle_container)
+        middle_layout.setContentsMargins(0, 0, 0, 0)
+        middle_layout.addWidget(bottom_split)
+        self._keys_results_scroll = QScrollArea()
+        self._keys_results_scroll.setWidget(middle_container)
+        self._keys_results_scroll.setWidgetResizable(True)
+        self._keys_results_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._keys_results_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._keys_results_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # 6. Save + Log nebeneinander
-        save_log_split = QSplitter(Qt.Orientation.Horizontal)
-        refine_g = QGroupBox("6. Save")
-        refine_g.setToolTip("Write indexed data to SQLite or export as JSONL/CSV.")
-        refine_l = QHBoxLayout(refine_g)
-        refine_l.addStretch()
+        # Top (1-3) | scrollable middle (4-5) | save+log – fixed 800x1000 target
+        main.addWidget(top_section, 0)
+        main.addWidget(self._keys_results_scroll, 1)
+
+        # 6. Save + Log: one mini bar (buttons + one-line log), no splitter
+        save_log_bar = QWidget()
+        save_log_bar.setFixedHeight(40)
+        save_log_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        bar_l = QHBoxLayout(save_log_bar)
+        bar_l.setContentsMargins(0, 2, 0, 2)
+        bar_l.setSpacing(6)
         load_schema_btn = QPushButton("Load schema from DB", clicked=self._load_schema_from_db)
         load_schema_btn.setToolTip("Load custom_token_map and other schema from existing DB.")
-        refine_l.addWidget(load_schema_btn)
+        bar_l.addWidget(load_schema_btn)
         save_btn = QPushButton("Save to DB", clicked=self._save_to_db)
         save_btn.setStyleSheet("font-weight: bold; min-width: 100px;")
         save_btn.setToolTip("Write indexed data to SQLite database (path from Output & DB).")
-        refine_l.addWidget(save_btn)
+        bar_l.addWidget(save_btn)
         export_btn = QPushButton("Export JSONL/CSV", clicked=self._export_files)
         export_btn.setToolTip("Export index.jsonl, index.csv, groups.json to Output folder.")
-        refine_l.addWidget(export_btn)
-        log_g = QGroupBox("Log")
-        log_g.setToolTip("Timings, files/s, and post-process metrics from crawl.")
-        log_l = QVBoxLayout(log_g)
+        bar_l.addWidget(export_btn)
+        bar_l.addSpacing(8)
         self.log_widget = QPlainTextEdit()
         self.log_widget.setReadOnly(True)
-        self.log_widget.setMinimumHeight(40)
-        self.log_widget.setFont(QFont("Consolas"))
-        self.log_widget.setStyleSheet("font-size: 10px; padding: 4px;")
-        self.log_widget.setPlaceholderText("Log output appears here during crawl (timings, files/s, etc.)")
-        self.log_widget.setToolTip("Crawl progress and timing info.")
-        log_l.addWidget(self.log_widget)
-        save_log_split.addWidget(refine_g)
-        save_log_split.addWidget(log_g)
-        save_log_split.setSizes([180, 400])  # Save compact, Log mehr Platz
-        save_log_split.setStretchFactor(0, 0)
-        save_log_split.setStretchFactor(1, 1)
-        ss = settings.get("splitter_sizes", "")
-        if ss:
-            try:
-                sizes = [int(x.strip()) for x in ss.split(",") if x.strip()]
-                if len(sizes) >= 2:
-                    save_log_split.setSizes(sizes)
-            except ValueError:
-                pass
-        self.save_log_split = save_log_split
-        main.addWidget(save_log_split)
+        self.log_widget.setFixedHeight(26)
+        self.log_widget.setFont(QFont("Consolas", 9))
+        self.log_widget.setStyleSheet("font-size: 9px; padding: 2px 4px;")
+        self.log_widget.setPlaceholderText("Log (crawl timings, files/s)")
+        self.log_widget.setToolTip("Crawl progress and timing info. Last lines shown.")
+        bar_l.addWidget(self.log_widget, 1)
+        main.addWidget(save_log_bar, 0)
 
         self._log_queue: queue.Queue = queue.Queue()
         self.setAcceptDrops(True)
@@ -828,16 +925,41 @@ class DampfGui(QMainWindow):
     def _toggle_advanced(self, on: bool) -> None:
         self.advanced_w.setVisible(on)
 
+    def _toggle_top_section(self) -> None:
+        """Collapse/expand sections 1-3 (Root, Crawl, Include folders). Collapsed = only button, no margin."""
+        content = getattr(self, "_top_section_content", None)
+        expand_bar = getattr(self, "_expand_bar", None)
+        top_section = getattr(self, "_top_section", None)
+        if not content or not expand_bar:
+            return
+        visible = not content.isVisible()
+        content.setVisible(visible)
+        expand_bar.setVisible(not visible)
+        if top_section:
+            if visible:
+                top_section.setMaximumHeight(16777215)
+            else:
+                top_section.setMaximumHeight(48)
+
+    def _toggle_unrec_section(self) -> None:
+        """Expand/collapse Unrecognized -> Parameters panel (collapsed by default)."""
+        self._unrec_section_visible = not getattr(self, "_unrec_section_visible", False)
+        self._unrec_g.setVisible(self._unrec_section_visible)
+        if self._unrec_section_visible:
+            self._unrec_toggle_btn.setText("Unrecognized → Parameters (not yet functional) \u25B2")
+        else:
+            self._unrec_toggle_btn.setText("Unrecognized → Parameters (not yet functional) \u25BC")
+
     def _apply_theme(self) -> None:
         light = self.light_mode_cb.isChecked()
         self.setStyleSheet(STYLESHEET_LIGHT if light else STYLESHEET_DARK)
         if getattr(self, "_last_sample_rows", None):
             self._fill_path_overview(self._last_sample_rows)
         if getattr(self, "_last_detected_keys", None):
-            self._refresh_key_tree(self._last_detected_keys)
+            self._refresh_key_tree(self._last_detected_keys, key_order=getattr(self, "_legend_key_order", None))
 
     def _populate_folder_tree(self, rows: list) -> None:
-        by_folder = _build_folder_tree(rows)
+        by_folder, by_folder_ext = _build_folder_tree(rows)
         if not by_folder:
             self.folder_tree_w.clear()
             self._folder_tree_ready = False
@@ -849,15 +971,22 @@ class DampfGui(QMainWindow):
             for i in range(1, len(parts) + 1):
                 all_paths.add("/".join(parts[:i]))
         prefix_count: dict[str, int] = {}
+        prefix_ext: dict[str, dict[str, int]] = {}
         for folder, c in by_folder.items():
             parts = folder.split("/") if folder else []
+            exts = by_folder_ext.get(folder, {})
             for i in range(len(parts) + 1):
                 p = "/".join(parts[:i]) if i else ""
                 prefix_count[p] = prefix_count.get(p, 0) + c
+                if p not in prefix_ext:
+                    prefix_ext[p] = {}
+                for ext, cnt in exts.items():
+                    prefix_ext[p][ext] = prefix_ext[p].get(ext, 0) + cnt
 
         path_to_item: dict[str, QTreeWidgetItem] = {}
         sorted_paths = sorted(all_paths)
         path_to_idx = {p: i + 1 for i, p in enumerate(sorted_paths)}
+        ext_filter = getattr(self, "_ext_filter", None)
         self.folder_tree_w.clear()
         for path in sorted_paths:
             idx = path_to_idx.get(path, 0)
@@ -866,9 +995,14 @@ class DampfGui(QMainWindow):
             parent_path = "/".join(parts[:-1]) if len(parts) > 1 else None
             parent_item = path_to_item.get(parent_path) if parent_path else None
             total = prefix_count.get(path, 0)
-            item = QTreeWidgetItem([str(idx), "", name, str(total)])
+            exts_here = prefix_ext.get(path, {})
+            files_str = ", ".join(f"{cnt} ({ext})" for ext, cnt in sorted(exts_here.items(), key=lambda x: (-x[1], x[0])))
+            if not files_str:
+                files_str = "0"
+            count_selected = sum(exts_here.values()) if ext_filter is None else exts_here.get(ext_filter, 0)
+            item = QTreeWidgetItem([str(idx), "", name, files_str])
             item.setData(2, Qt.ItemDataRole.UserRole, path)
-            item.setCheckState(1, Qt.CheckState.Checked)
+            item.setCheckState(1, Qt.CheckState.Checked if count_selected > 0 else Qt.CheckState.Unchecked)
             if parent_item:
                 parent_item.addChild(item)
             else:
@@ -876,6 +1010,7 @@ class DampfGui(QMainWindow):
             path_to_item[path] = item
         for c in range(self.folder_tree_w.columnCount()):
             self.folder_tree_w.resizeColumnToContents(c)
+        self._prefix_ext = prefix_ext
         self.folder_tree_g.show()
         self._folder_tree_ready = False
         self.folder_tree_w.blockSignals(True)
@@ -903,7 +1038,8 @@ class DampfGui(QMainWindow):
             collect(self.folder_tree_w.topLevelItem(i))
 
         if not included:
-            included = set(_build_folder_tree(self._all_rows))
+            by_folder, _ = _build_folder_tree(self._all_rows)
+            included = set(by_folder)
         self._folder_includes = included
         self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), included)
         self._show_nomenclature()
@@ -941,7 +1077,7 @@ class DampfGui(QMainWindow):
         self.ext_filter_buttons_l.addWidget(all_btn)
 
     def _on_ext_filter_clicked(self, ext: str | None) -> None:
-        """User clicked an extension filter. Update display."""
+        """User clicked an extension filter. Update display and folder checkboxes."""
         self._ext_filter = ext
         for i in range(self.ext_filter_buttons_l.count()):
             w = self.ext_filter_buttons_l.itemAt(i).widget()
@@ -951,8 +1087,31 @@ class DampfGui(QMainWindow):
                     w.setChecked(lbl.startswith("All "))
                 else:
                     w.setChecked(lbl.startswith(ext + " "))
+        self._update_folder_tree_check_boxes()
         self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), self._folder_includes)
         self._show_nomenclature()
+
+    def _update_folder_tree_check_boxes(self) -> None:
+        """Set folder Include checkboxes from current _ext_filter and _prefix_ext."""
+        prefix_ext = getattr(self, "_prefix_ext", None)
+        if not prefix_ext:
+            return
+        ext_filter = getattr(self, "_ext_filter", None)
+        self.folder_tree_w.blockSignals(True)
+        try:
+            def set_rec(it: QTreeWidgetItem) -> None:
+                path = it.data(2, Qt.ItemDataRole.UserRole)
+                if path is not None:
+                    exts_here = prefix_ext.get(path, {})
+                    count_selected = sum(exts_here.values()) if ext_filter is None else exts_here.get(ext_filter, 0)
+                    it.setCheckState(1, Qt.CheckState.Checked if count_selected > 0 else Qt.CheckState.Unchecked)
+                for i in range(it.childCount()):
+                    set_rec(it.child(i))
+            for i in range(self.folder_tree_w.topLevelItemCount()):
+                set_rec(self.folder_tree_w.topLevelItem(i))
+        finally:
+            self.folder_tree_w.blockSignals(False)
+        self._apply_folder_selection()
 
     def _filter_rows_by_folders(self, rows: list, included: set[str]) -> list:
         if not included:
@@ -997,8 +1156,8 @@ class DampfGui(QMainWindow):
         if self._last_detected_keys:
             config = self._get_config()
             self.groups = group_rows(self._effective_rows, config["group_keys"])
-            self._refresh_key_tree(self._last_detected_keys)
-            self.schema_summary_label.setText(self._format_schema_summary())
+            self._refresh_key_tree(self._last_detected_keys, key_order=getattr(self, "_legend_key_order", None))
+            self._update_detected_keys_header()
             root = self.root_edit.text().strip() or None
             self._legend_key_order = _compute_legend_key_order(
                 self._effective_rows, self._last_detected_keys, root
@@ -1009,14 +1168,17 @@ class DampfGui(QMainWindow):
         if not self._last_detected_keys:
             return ""
         total = len(self._effective_rows)
-        per_key = {k: sum(1 for r in self._effective_rows if r.get(k) is not None) for k in self._last_detected_keys}
-        all_same = all(per_key.get(k, 0) == total for k in self._last_detected_keys)
         n_all = len(self.rows)
         txt = f"{total:,} files"
         if n_all != total:
             txt += f" (from {n_all:,} in folders)"
-        txt += "; " + ("all same keys" if all_same else "outliers – " + ", ".join(f"{total - per_key.get(k, 0)} missing '{k}'" for k in self._last_detected_keys if per_key.get(k, 0) < total))
         return txt
+
+    def _update_detected_keys_header(self) -> None:
+        """Update group box title with file count and schema summary label."""
+        n = len(self._effective_rows)
+        self.struct_g.setTitle(f"4. Detected keys ({n:,} files)")
+        self.schema_summary_label.setText(self._format_schema_summary())
 
     def _suggest_exclude_rec(self, item: QTreeWidgetItem, keywords: tuple) -> None:
         path = item.data(2, Qt.ItemDataRole.UserRole) or ""
@@ -1167,13 +1329,13 @@ class DampfGui(QMainWindow):
         total, per_key = _schema_consistency(self.rows, detected) if detected else (0, {})
         all_same = all(per_key.get(k, 0) == total for k in detected) if detected else True
         if not all_same:
-            self.dup_label.setStyleSheet("color: #f9a825; font-weight: bold; font-size: 11px; padding: 2px 0;")
+            self.dup_label.setStyleSheet("color: #f9a825; font-weight: bold; font-size: 10px; padding: 0 4px 0 0;")
             self.dup_label.setText("Warning: schema inconsistent (some files missing parameters). Use 'Include incomplete (fill empty)' to add them.")
         elif all_dups:
-            self.dup_label.setStyleSheet("font-size: 11px; padding: 2px 0;")
+            self.dup_label.setStyleSheet("font-size: 10px; padding: 0 4px 0 0;")
             self.dup_label.setText("Info: parameter in folder and filename: " + ", ".join(sorted(all_dups)))
         else:
-            self.dup_label.setStyleSheet("font-size: 11px; padding: 2px 0;")
+            self.dup_label.setStyleSheet("font-size: 10px; padding: 0 4px 0 0;")
             self.dup_label.setText("")
         root = self.root_edit.text().strip() or None
         self._legend_key_order = _compute_legend_key_order(self._effective_rows, detected, root)
@@ -1182,8 +1344,6 @@ class DampfGui(QMainWindow):
         self.group_keys_edit.setText(", ".join(suggested))
         config = self._get_config()
         self.groups = group_rows(self._effective_rows, config["group_keys"])
-        if detected:
-            self.key_display_edit.setText(get_display_name(detected[0], self.key_display_names))
         self._refresh_path_overview()
         self._refresh_unrecognized_panel()
 
@@ -1191,17 +1351,13 @@ class DampfGui(QMainWindow):
         self.key_tree.blockSignals(True)
         self.key_tree.clear()
         if not detected_keys:
+            self.struct_g.setTitle("4. Detected keys (0 files)")
             self.schema_summary_label.setText("")
             self.key_tree.blockSignals(False)
             return
         total, per_key = _schema_consistency(self._effective_rows, detected_keys)
-        all_same = all(per_key.get(k, 0) == total for k in detected_keys)
         n_all = len(self._all_rows) if hasattr(self, "_all_rows") else total
-        schema_txt = f"{total:,} files"
-        if n_all != total:
-            schema_txt += f" (from {n_all:,} crawled)"
-        schema_txt += "; schema: " + ("all same keys" if all_same else "outliers – " + ", ".join(f"{total - per_key.get(k, 0)} missing '{k}'" for k in detected_keys if per_key.get(k, 0) < total))
-        self.schema_summary_label.setText(self._format_schema_summary())
+        self._update_detected_keys_header()
         stats = _key_stats(self._effective_rows, detected_keys)
         self._suggested_categorical = suggest_categorical_keys(self._effective_rows, threshold=10)
         colors = _KEY_COLORS_LIGHT if self.light_mode_cb.isChecked() else _KEY_COLORS_DARK
@@ -1221,23 +1377,31 @@ class DampfGui(QMainWindow):
                 if isinstance(v, list) and v and is_quantitative_val(v[0]):
                     raw_units[k] = v[0].get("unit", "")
                     break
+        def _fmt_num(x) -> str:
+            if x is None:
+                return "-"
+            if isinstance(x, float) and x != int(x):
+                return f"{x:.2g}"
+            return str(int(x))
+
         for cat_label, pairs in build_key_tree(detected_keys, self.key_categories, self.key_display_names, key_order):
-            cat_item = QTreeWidgetItem([cat_label, "", "", "", "", "", ""])
+            cat_item = QTreeWidgetItem([""] * 11)
             cat_item.setFlags(cat_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
             self.key_tree.addTopLevelItem(cat_item)
             for key, display_name in pairs:
                 s = stats.get(key, {})
                 u = s.get("uniques", 0)
-                mn, mx = s.get("min"), s.get("max")
-                if mn is None:
-                    stats_str = "-"
-                    uniq_str = str(u)
+                mn, mx, mean = s.get("min"), s.get("max"), s.get("mean")
+                min_str = _fmt_num(mn)
+                max_str = _fmt_num(mx)
+                mean_str = _fmt_num(mean)
+                full_count = per_key.get(key, 0)
+                missing = total - full_count
+                if missing == 0:
+                    full_str = str(total)
                 else:
-                    if (isinstance(mn, float) and mn != int(mn)) or (isinstance(mx, float) and mx != int(mx)):
-                        stats_str = f"{mn:.2g}-{mx:.2g}"
-                    else:
-                        stats_str = f"{int(mn)}-{int(mx)}"
-                    uniq_str = str(u)
+                    full_str = f"{full_count} (−{missing})"
+                uniq_str = str(u)
                 default_used = u > 1
                 is_used = self.key_is_used.get(key, default_used)
                 is_cat = self.key_is_categorical.get(key, u < 10)
@@ -1252,20 +1416,17 @@ class DampfGui(QMainWindow):
                 else:
                     unit_text = "-"
                 exp_to_show = si_exp if si_exp is not None else (unit_to_exponent(raw_u) if raw_u and has_unit else None)
-                si_text = f"10^{exp_to_show}" if exp_to_show is not None else ""
-                key_display = f"{display_name}  [{key}]" if display_name != key else key
-                child = QTreeWidgetItem(cat_item, ["", key_display, stats_str, uniq_str, "", si_text, unit_text])
-                child.setData(1, Qt.ItemDataRole.UserRole, key)
-                child.setData(5, Qt.ItemDataRole.UserRole, has_unit)
-                child.setData(6, Qt.ItemDataRole.UserRole, raw_u)
-                child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                si_text = str(exp_to_show) if exp_to_show is not None else ""
+                child = QTreeWidgetItem(cat_item, ["", "", uniq_str, full_str, display_name, key, si_text, unit_text, min_str, max_str, mean_str])
+                child.setData(5, Qt.ItemDataRole.UserRole, key)
+                child.setData(6, Qt.ItemDataRole.UserRole, has_unit)
+                child.setData(7, Qt.ItemDataRole.UserRole, raw_u)
+                child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
                 child.setCheckState(0, Qt.CheckState.Checked if is_used else Qt.CheckState.Unchecked)
-                child.setCheckState(4, Qt.CheckState.Checked if is_cat else Qt.CheckState.Unchecked)
-                if has_unit:
-                    child.setFlags(child.flags() | Qt.ItemFlag.ItemIsEditable)
+                child.setCheckState(1, Qt.CheckState.Checked if is_cat else Qt.CheckState.Unchecked)
                 bg = key_to_color.get(key)
                 if bg:
-                    child.setBackground(1, QBrush(QColor(bg)))
+                    child.setBackground(5, QBrush(QColor(bg)))
             cat_item.setExpanded(True)
         self.key_tree.blockSignals(False)
         for c in range(self.key_tree.columnCount()):
@@ -1274,27 +1435,32 @@ class DampfGui(QMainWindow):
     def _on_key_tree_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
         if item.childCount() > 0:
             return
-        key = item.data(1, Qt.ItemDataRole.UserRole)
+        key = item.data(5, Qt.ItemDataRole.UserRole)
         if not key:
             return
         if column == 0:
             self.key_is_used[key] = item.checkState(0) == Qt.CheckState.Checked
+        elif column == 1:
+            self.key_is_categorical[key] = item.checkState(1) == Qt.CheckState.Checked
         elif column == 4:
-            self.key_is_categorical[key] = item.checkState(4) == Qt.CheckState.Checked
-        elif column == 5 and item.data(5, Qt.ItemDataRole.UserRole):
-            txt = item.text(5).strip()
+            display_name = item.text(4).strip()
+            self.key_display_names[key] = display_name or key
+        elif column == 5:
+            item.setText(5, key)
+        elif column == 6 and item.data(6, Qt.ItemDataRole.UserRole):
+            txt = item.text(6).strip()
             if not txt:
                 self.key_si_scale.pop(key, None)
-                raw_u = item.data(6, Qt.ItemDataRole.UserRole) or ""
-                item.setText(6, raw_u if raw_u else "-")
+                raw_u = item.data(7, Qt.ItemDataRole.UserRole) or ""
+                item.setText(7, raw_u if raw_u else "-")
             else:
                 m = re.match(r"10\^(-?\d+)$", txt)
-                exp_str = m.group(1) if m else txt
+                exp_str = m.group(1) if m else txt  # plain number e.g. -3 or 10^-3
                 try:
                     exp = int(exp_str)
                     self.key_si_scale[key] = exp
                     base = SI_BASE_UNIT.get(key, "")
-                    item.setText(6, exponent_to_unit(base, exp))
+                    item.setText(7, exponent_to_unit(base, exp))
                 except ValueError:
                     pass
 
@@ -1307,9 +1473,8 @@ class DampfGui(QMainWindow):
         if item.childCount() > 0:
             self._refresh_key_samples_label(None)
             return
-        key = item.data(1, Qt.ItemDataRole.UserRole)
+        key = item.data(5, Qt.ItemDataRole.UserRole)
         if key:
-            self.key_display_edit.setText(get_display_name(key, self.key_display_names))
             self._refresh_key_samples_label(key)
 
     def _refresh_key_samples_label(self, key: str | None) -> None:
@@ -1356,17 +1521,6 @@ class DampfGui(QMainWindow):
             self.key_samples_label.setText(f"Sample values for [{key}]: {txt}")
         self.key_samples_label.setToolTip(f"Values for parameter {key} in current data.")
 
-    def _apply_display_name(self) -> None:
-        items = self.key_tree.selectedItems()
-        if not items or items[0].childCount() > 0:
-            return
-        key = items[0].data(1, Qt.ItemDataRole.UserRole)
-        if not key:
-            return
-        name = self.key_display_edit.text().strip()
-        self.key_display_names[key] = name or key
-        self._refresh_key_tree(self._last_detected_keys)
-
     def _get_used_keys(self) -> list | None:
         """Return list of keys that are checked in Used column, or None for all."""
         out: list = []
@@ -1374,21 +1528,10 @@ class DampfGui(QMainWindow):
             cat = self.key_tree.topLevelItem(i)
             for j in range(cat.childCount()):
                 child = cat.child(j)
-                key = child.data(1, Qt.ItemDataRole.UserRole)
+                key = child.data(5, Qt.ItemDataRole.UserRole)
                 if key and child.checkState(0) == Qt.CheckState.Checked:
                     out.append(key)
         return out if out else None
-
-    def _reset_display_name(self) -> None:
-        items = self.key_tree.selectedItems()
-        if not items or items[0].childCount() > 0:
-            return
-        key = items[0].data(1, Qt.ItemDataRole.UserRole)
-        if not key:
-            return
-        self.key_display_names.pop(key, None)
-        self.key_display_edit.setText(get_display_name(key, None))
-        self._refresh_key_tree(self._last_detected_keys)
 
     def _refresh_unrecognized_panel(self) -> None:
         """Populate unrecognized token combo and mappings list."""
@@ -1405,7 +1548,7 @@ class DampfGui(QMainWindow):
             for tok, key in sorted(self.custom_token_map.items(), key=lambda x: (x[1], x[0])):
                 it = QTreeWidgetItem([tok, key])
                 it.setData(0, Qt.ItemDataRole.UserRole, tok)
-                it.setData(1, Qt.ItemDataRole.UserRole, key)
+                it.setData(4, Qt.ItemDataRole.UserRole, key)
                 self.unrec_mappings_list.addTopLevelItem(it)
         finally:
             self._refreshing_unrec_panel = False
@@ -1480,7 +1623,7 @@ class DampfGui(QMainWindow):
         if not items:
             return
         tok = items[0].data(0, Qt.ItemDataRole.UserRole)
-        key = items[0].data(1, Qt.ItemDataRole.UserRole)
+        key = items[0].data(5, Qt.ItemDataRole.UserRole)
         if tok and key and tok in self.custom_token_map:
             del self.custom_token_map[tok]
             for row in self._all_rows:
@@ -1561,26 +1704,16 @@ class DampfGui(QMainWindow):
             segs_per_line.append(segs)
             dup_per_line.append(set(keys_dup))
         legend_order = getattr(self, "_legend_key_order", None) or ordered
-        legend_parts = []
-        for k in legend_order:
-            base = key_to_color.get(k)
-            if not base:
-                continue
-            present = k in keys_in_samples
-            label = f"({k})" if not present else k
-            legend_parts.append(f'<span style="background-color:{base}; padding:0 4px;"> {label} </span>')
         unrec_color = "#e0e0e0" if self.light_mode_cb.isChecked() else "#505050"
         neutral_color = "#f0f0f0" if self.light_mode_cb.isChecked() else "#404040"
-        legend_parts.append(f'<span style="background-color:{neutral_color}; padding:0 4px;"> filetype </span>')
-        legend_parts.append(f'<span style="background-color:{neutral_color}; padding:0 4px;"> separator </span>')
-        legend_parts.append(f'<span style="background-color:{unrec_color}; padding:0 4px;"> rest </span>')
         self.color_legend.setTextFormat(Qt.TextFormat.RichText)
-        rec_part = "  ".join(legend_parts[:-3]) if len(legend_parts) > 3 else ""
-        meta_part = "  ".join(legend_parts[-3:])
-        leg = ("Recognized: " + rec_part + "  |  " + meta_part) if legend_parts else ""
+        pseudopath_html = _build_pseudopath_from_rows(
+            rows, root_dir, legend_order, sep, key_to_color, neutral_color, unrec_color
+        )
+        leg = ("Recognized: " + pseudopath_html) if pseudopath_html else ""
         self.color_legend.setText(leg)
         self.color_legend.setToolTip(
-            "Parameters (colored), filetype (extension), separator (- _ / \\), rest (unmapped)."
+            "Pseudo-path from actual paths. Key names; (key) = key not in all paths. Colors = parameter."
         )
         full = "\n".join(lines)
         self.path_overview.setPlainText(full)
@@ -1622,7 +1755,7 @@ class DampfGui(QMainWindow):
         if tree and tree.selectedItems():
             it = tree.selectedItems()[0]
             if it.childCount() == 0:
-                sel_key = it.data(1, Qt.ItemDataRole.UserRole)
+                sel_key = it.data(5, Qt.ItemDataRole.UserRole)
         if sel_key:
             self._refresh_key_samples_label(sel_key)
 
