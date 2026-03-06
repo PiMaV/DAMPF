@@ -28,6 +28,7 @@ DEFAULT_SCHEMA = {
     "modality_map": None,
     "stopwords": None,
     "custom_token_map": {},
+    "token_patterns": [],
 }
 
 

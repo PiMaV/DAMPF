@@ -1,14 +1,19 @@
-# PyInstaller spec for DAMPF GUI (standalone EXE).
-# Run: pyinstaller DAMPF.spec
-
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('C:\\Cursor\\DAMPF\\icon', 'icon')]
+binaries = []
+hiddenimports = ['indexer', 'db_writer', 'outlier_detection', 'key_lut', 'app_settings', 'schema_io']
+tmp_ret = collect_all('PyQt6')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
 
 a = Analysis(
-    ['gui.py'],
-    pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=['indexer', 'db_writer', 'schema_io', 'app_settings', 'key_lut'],
+    ['C:\\Cursor\\DAMPF\\gui.py'],
+    pathex=['C:\\Cursor\\DAMPF'],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -16,7 +21,6 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
-
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -38,4 +42,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['C:\\Cursor\\DAMPF\\icon\\icon.ico'],
 )

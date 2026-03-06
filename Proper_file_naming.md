@@ -140,3 +140,5 @@ Um weitere Schreibweisen oder Einheiten zu unterstuetzen:
 
 3. **Projekt-spezifisch (ohne Code-Aenderung):**
    - Ueber project.json / GUI: `modality_map` und ggf. `stopwords` anpassen; erweiterbare key=value-Tokens werden bereits als solche erkannt.
+
+**Ausreisser-Erkennung:** Bei Abweichungen vom Schema oder moeglichen Tippfehlern in Ordnernamen zeigt die DAMPF-GUI eine Outlier-Liste mit Vorschlaegen (Bereich „Ausreisser / Tippfehler“).

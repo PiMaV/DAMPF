@@ -106,7 +106,7 @@ DEFAULT_KEY_CATEGORIES: Dict[str, str] = {
     "experiment": "Experiment",
     "sample": "Sample",
     "seq": "Sequence",
-    "m": "Parameter",
+    "m": "Measurement",
     "ff": "Parameter",
 }
 
@@ -123,7 +123,7 @@ DEFAULT_KEY_DISPLAY_NAMES: Dict[str, str] = {
     "n2": "N2 (%)",
     "co2": "CO2 (%)",
     "gas_flow": "Gas flow (slm)",
-    "m": "Parameter M",
+    "m": "Measurement",
     "ff": "FF",
     "frame": "Frame",
     "seq": "Sequence",

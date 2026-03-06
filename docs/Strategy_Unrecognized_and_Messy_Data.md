@@ -65,9 +65,9 @@
 - [ ] Batch-Mapping: mehrere Tokens auf einmal zu einem Key (z.B. SyncK, SyncAA, SyncDD → sync_mode)
 - [ ] Vorschlaege: "Sync*" → sync_mode?
 
-### Phase 3: Ausreisser (separater Plan)
-- [ ] Pfade markieren, die vom Schema abweichen
-- [ ] Tippfehler-Vorschlaege (z.B. MultFiLI → MultFilI?)
+### Phase 3: Ausreisser (implementiert)
+- [x] Pfade markieren, die vom Schema abweichen (Modul `outlier_detection.py`, GUI-Bereich "Ausreisser / Tippfehler")
+- [x] Tippfehler-Vorschlaege (z.B. MultFiLI → MultFilI?) – seltene Ordnernamen aehnlich haeufigen werden in der Outlier-Tabelle mit Vorschlag angezeigt
 
 ### Phase 4: Philosophie dokumentiert
 - DAMPF ist ein **hilfreiches** Tool – custom_token_map als Basis, Ausreisser optional

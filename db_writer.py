@@ -160,8 +160,11 @@ def write_index_to_sqlite(
 
         if schema_config is not None:
             conn.execute('CREATE TABLE config ( "key" TEXT PRIMARY KEY, "value" TEXT )')
-            schema_json = json.dumps(schema_config, ensure_ascii=False)
-            conn.execute('INSERT INTO config ("key", "value") VALUES (?, ?)', ("schema", schema_json))
+            for k, v in schema_config.items():
+                conn.execute(
+                    'INSERT INTO config ("key", "value") VALUES (?, ?)',
+                    (str(k), json.dumps(v, ensure_ascii=False)),
+                )
 
         conn.commit()
     finally:
@@ -217,17 +220,23 @@ def _sql_type_for_key(rows: List[Dict[str, Any]], key: str, use_extracted_val: b
 
 
 def load_schema_from_db(db_path: str | Path) -> Optional[Dict[str, Any]]:
-    """Load schema/project config from DB config table. Returns None if not present."""
+    """Load schema from DB config table (one row per key, value=JSON). Returns None if not present."""
     db_path = Path(db_path)
     if not db_path.is_file():
         return None
     conn = sqlite3.connect(str(db_path))
     try:
-        cur = conn.execute("SELECT value FROM config WHERE key = ?", ("schema",))
-        row = cur.fetchone()
-        if row:
-            return json.loads(row[0])
-        return None
+        cur = conn.execute('SELECT "key", "value" FROM config')
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        out: Dict[str, Any] = {}
+        for k, v in rows:
+            try:
+                out[k] = json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                out[k] = v
+        return out
     except sqlite3.OperationalError:
         return None
     finally:

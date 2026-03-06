@@ -145,6 +145,10 @@ def tokenize_string(
         elif RE_SLM_FLOW_TOKEN.match(pl):
             out.append(pl)
             norm_to_orig.setdefault(pl, p)
+        elif re.match(r"^m\d{1,4}$", pl):
+            # M + digits (e.g. M10, M14) = measurement ID; keep as one token so it is not split to M + 10
+            out.append(pl)
+            norm_to_orig.setdefault(pl, p)
         else:
             sub = split_transitions(p)
             for t in sub:
@@ -217,13 +221,72 @@ class ParseResult:
         return float(1.0 - math.exp(-3.0 * ratio))
 
 
-def parse_tokens(tokens: List[str], modality_map: Optional[Dict[str, str]] = None) -> ParseResult:
+def _apply_user_pattern(
+    tok: str, pattern: Dict[str, Any], m: re.Match
+) -> Tuple[Optional[str], Optional[Any]]:
+    """Given a matched user pattern, return (key, value) for set_field, or (None, None)."""
+    key = pattern.get("key")
+    extract = pattern.get("extract", "str")
+    cg = pattern.get("capture_group") or "n"
+    if not key:
+        return None, None
+    try:
+        if extract == "int":
+            if cg in m.groupdict():
+                return key, int(m.group(cg))
+            return None, None
+        if extract == "str":
+            return key, (m.group(cg) if cg in m.groupdict() else m.group(0))
+        if extract == "val_unit":
+            val = None
+            if "val" in m.groupdict():
+                val = parse_number(m.group("val"))
+            elif cg in m.groupdict():
+                val = parse_number(m.group(cg))
+            if val is None:
+                return None, None
+            unit = pattern.get("unit") or (m.group("unit") if "unit" in m.groupdict() else "")
+            return key, {"val": val, "unit": (unit or "").replace("µ", "u")}
+        if extract == "date_short_YY" and "a" in m.groupdict() and "b" in m.groupdict() and "c" in m.groupdict():
+            a, b, c = int(m.group("a")), int(m.group("b")), int(m.group("c"))
+            y, mo, d = 2000 + a, b, c
+            if 1 <= mo <= 12 and 1 <= d <= 31 and 2000 <= y <= 2099:
+                return key, f"{y:04d}-{mo:02d}-{d:02d}"
+            return None, None
+        if extract == "date_short_DM" and "a" in m.groupdict() and "b" in m.groupdict() and "c" in m.groupdict():
+            a, b, c = int(m.group("a")), int(m.group("b")), int(m.group("c"))
+            d, mo, y = a, b, 2000 + c
+            if 1 <= mo <= 12 and 1 <= d <= 31 and 2000 <= y <= 2099:
+                return key, f"{y:04d}-{mo:02d}-{d:02d}"
+            return None, None
+    except (ValueError, IndexError, KeyError):
+        return None, None
+    return None, None
+
+
+def parse_tokens(
+    tokens: List[str],
+    modality_map: Optional[Dict[str, str]] = None,
+    token_patterns: Optional[List[Dict[str, Any]]] = None,
+    custom_token_map: Optional[Dict[str, str]] = None,
+    only_last_plain_digits_as_frame: bool = False,
+) -> ParseResult:
     modality_map = modality_map or DEFAULT_MODALITY_MAP
     data: Dict[str, Any] = {}
     trace: List[str] = []
     token_to_key: Dict[str, str] = {}
     recognized = 0
     total = len(tokens)
+    # Precompile user patterns (priority desc); skip invalid regexes
+    compiled_patterns: List[Tuple[re.Pattern, Dict[str, Any]]] = []
+    for p in sorted(token_patterns or [], key=lambda x: -(x.get("priority") or 0)):
+        rx = p.get("regex")
+        if not rx or not p.get("key"):
+            continue
+        try:
+            compiled_patterns.append((re.compile(rx), p))
+        except re.error:
+            continue
 
     def set_field(k: str, v: Any, why: str, token: Optional[str] = None):
         nonlocal recognized
@@ -236,7 +299,8 @@ def parse_tokens(tokens: List[str], modality_map: Optional[Dict[str, str]] = Non
             if token is not None:
                 token_to_key[token] = k
 
-    for tok in tokens:
+    n_tokens = len(tokens)
+    for idx, tok in enumerate(tokens):
         if not tok:
             continue
         m = (
@@ -287,6 +351,11 @@ def parse_tokens(tokens: List[str], modality_map: Optional[Dict[str, str]] = Non
         if m:
             set_field("frame", int(m.group("n")), "frame", tok)
             continue
+        # M + digits (M10, M14, M18) = measurement ID; must be recognised before RE_PARAM/plain-digits so M10_0 and M14_14 get m + frame
+        m_m = re.match(r"^m(\d{1,4})$", tok)
+        if m_m and "m" not in data:
+            set_field("m", int(m_m.group(1)), "m_digits", tok)
+            continue
         m = RE_PARAM.match(tok)
         if m:
             key, val = m.group(1), m.group(2)
@@ -296,12 +365,23 @@ def parse_tokens(tokens: List[str], modality_map: Optional[Dict[str, str]] = Non
                 recognized += 1
                 token_to_key[tok] = key
             continue
+        # Plain digits (0, 18, 220) as frame first, so numbers without leading zeros are not misclassified as seq
+        if re.fullmatch(r"\d+", tok):
+            if only_last_plain_digits_as_frame:
+                if idx == n_tokens - 1:
+                    if "frame" not in data:
+                        set_field("frame", int(tok), "frame", tok)
+                    continue
+                if idx > 0 and tokens[idx - 1].lower() == "m" and "m" not in data:
+                    set_field("m", int(tok), "m_after_M", tok)
+                    continue
+                continue
+            if "frame" not in data:
+                set_field("frame", int(tok), "frame", tok)
+            continue
         m = RE_SEQ.match(tok)
         if m and "seq" not in data:
             set_field("seq", int(m.group("n")), "seq", tok)
-            continue
-        if re.fullmatch(r"\d+", tok) and "frame" not in data:
-            set_field("frame", int(tok), "frame", tok)
             continue
         if tok in modality_map:
             set_field("modality", modality_map[tok], "modality", tok)
@@ -391,6 +471,19 @@ def parse_tokens(tokens: List[str], modality_map: Optional[Dict[str, str]] = Non
         if re.fullmatch(r"(?:sample|smp|specimen)[a-z0-9]{1,6}", tok):
             set_field("sample", tok, "sample", tok)
             continue
+        # User token_patterns (after built-in, before custom_token_map)
+        for rec, pat in compiled_patterns:
+            m = rec.match(tok)
+            if not m:
+                continue
+            k, v = _apply_user_pattern(tok, pat, m)
+            if k is not None and v is not None and k not in data:
+                set_field(k, v, "user_pattern", tok)
+                break
+        else:
+            # custom_token_map: exact token -> key
+            if custom_token_map and tok in custom_token_map:
+                set_field(custom_token_map[tok], tok, "custom", tok)
 
     return ParseResult(data=data, trace=trace, recognized=recognized, total_tokens=total, token_to_key=token_to_key)
 
@@ -454,6 +547,54 @@ def group_rows(rows: List[Dict[str, Any]], keys: Tuple[str, ...]) -> Dict[str, L
         gk = " | ".join(f"{k}={_fmt_group_val(r.get(k))}" for k in keys)
         groups.setdefault(gk, []).append(r["path"])
     return groups
+
+
+def apply_majority_frame_logic(rows: List[Dict[str, Any]]) -> None:
+    """
+    In-place: if most rows have the last numeric token in the filename assigned to key K
+    (e.g. 'frame'), reassign the minority that have it as something else (e.g. 'seq') to K.
+    So 500 files with 'frame' + 100 with 'seq' at the same position -> all 600 get 'frame'.
+    """
+    if not rows:
+        return
+    key_counts: Counter[str] = Counter()
+    row_info: List[Tuple[Dict[str, Any], str, str, int]] = []
+    for r in rows:
+        file_tokens = r.get("_file_tokens") or []
+        file_ttk = r.get("_file_token_to_key") or {}
+        if not file_tokens:
+            continue
+        last_tok = file_tokens[-1]
+        if not re.fullmatch(r"\d+", last_tok):
+            continue
+        key = file_ttk.get(last_tok)
+        if not key:
+            continue
+        key_counts[key] += 1
+        try:
+            val = int(last_tok)
+        except ValueError:
+            continue
+        row_info.append((r, last_tok, key, val))
+    if not key_counts:
+        return
+    majority_key = key_counts.most_common(1)[0][0]
+    for r, tok, current_key, val in row_info:
+        if current_key == majority_key:
+            continue
+        if current_key == "m":
+            # Last token was assigned to measurement (e.g. ["m","18"] -> m=18). Keep m, add frame with same value (M18_18 -> m=18, frame=18).
+            r[majority_key] = val
+            ttk = dict(r.get("_file_token_to_key") or {})
+            ttk[tok] = majority_key
+            r["_file_token_to_key"] = ttk
+            continue
+        if r.get(current_key) == val:
+            del r[current_key]
+        r[majority_key] = val
+        ttk = dict(r.get("_file_token_to_key") or {})
+        ttk[tok] = majority_key
+        r["_file_token_to_key"] = ttk
 
 
 # Keys we never suggest for grouping (internal/metadata)
@@ -524,14 +665,25 @@ _PARALLEL_THRESHOLD = 100
 
 
 def _index_single_file(
-    args: Tuple[Path, Path, int, frozenset, Dict[str, str]]
+    args: Tuple[Path, Path, int, frozenset, Dict[str, str], List[Dict[str, Any]], Dict[str, str]]
 ) -> Dict[str, Any]:
     """Worker for ProcessPoolExecutor: index one file. Top-level for picklability."""
-    p, root, folder_depth, stopwords, modality_map = args
+    p, root, folder_depth, stopwords, modality_map, token_patterns, custom_token_map = args
     folder_tokens, file_tokens, norm_to_orig = tokenize_path_parts(p, root, folder_depth, stopwords=stopwords)
     tokens = folder_tokens + file_tokens
-    pr_folder = parse_tokens(folder_tokens, modality_map=modality_map)
-    pr_file = parse_tokens(file_tokens, modality_map=modality_map)
+    pr_folder = parse_tokens(
+        folder_tokens,
+        modality_map=modality_map,
+        token_patterns=token_patterns,
+        custom_token_map=custom_token_map,
+    )
+    pr_file = parse_tokens(
+        file_tokens,
+        modality_map=modality_map,
+        token_patterns=token_patterns,
+        custom_token_map=custom_token_map,
+        only_last_plain_digits_as_frame=True,
+    )
     row: Dict[str, Any] = {}
     row.update(pr_folder.data)
     row.update(pr_file.data)
@@ -606,6 +758,8 @@ def run_indexer(
         stopwords = set(stopwords)
     stopwords = stopwords or DEFAULT_STOPWORDS
     modality_map = cfg.get("modality_map") or DEFAULT_MODALITY_MAP
+    token_patterns = list(cfg.get("token_patterns") or [])
+    custom_token_map = dict(cfg.get("custom_token_map") or {})
     log_cb: Optional[Callable[[str], None]] = cfg.get("log_callback")
 
     def _log(msg: str) -> None:
@@ -633,18 +787,20 @@ def run_indexer(
     t2 = time.perf_counter()
     if use_parallel:
         args_list = [
-            (p, root, folder_depth, stopwords_frozen, modality_map_copy)
+            (p, root, folder_depth, stopwords_frozen, modality_map_copy, token_patterns, custom_token_map)
             for p in file_list
         ]
         with ProcessPoolExecutor(max_workers=max_workers) as ex:
             rows = list(ex.map(_index_single_file, args_list))
     else:
         rows = [
-            _index_single_file((p, root, folder_depth, stopwords_frozen, modality_map_copy))
+            _index_single_file((p, root, folder_depth, stopwords_frozen, modality_map_copy, token_patterns, custom_token_map))
             for p in file_list
         ]
     t3 = time.perf_counter()
     _log(f"[{t3 - t0:.3f}s] index done: {t3 - t2:.3f}s for {len(rows)} files ({len(rows) / max(0.001, t3 - t2):.0f} files/s)")
+
+    apply_majority_frame_logic(rows)
 
     t4 = time.perf_counter()
     groups = group_rows(rows, group_keys)

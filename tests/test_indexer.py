@@ -11,6 +11,8 @@ from indexer import (
     suggest_nomenclature,
     split_transitions,
     detect_dominant_suffix,
+    apply_majority_frame_logic,
+    tokenize_path_parts,
 )
 
 
@@ -167,3 +169,138 @@ def test_run_indexer_log_callback():
         run_indexer(root, root / "_index", config)
     assert any("iter_files" in L for L in logs)
     assert any("total" in L for L in logs)
+
+
+def test_parse_tokens_user_patterns():
+    """User token_patterns (regex -> key) are applied after built-in. Tokens are lowercased in pipeline."""
+    patterns = [
+        {"key": "gain", "regex": r"^gain(?P<n>\d+)$", "extract": "int", "capture_group": "n"},
+    ]
+    r = parse_tokens(["gain150"], token_patterns=patterns)
+    assert r.data.get("gain") == 150
+    assert r.token_to_key.get("gain150") == "gain"
+
+
+def test_parse_tokens_custom_token_map():
+    """custom_token_map exact token -> key applied when no built-in match."""
+    r = parse_tokens(["SyncK"], custom_token_map={"SyncK": "sync_id"})
+    assert r.data.get("sync_id") == "SyncK"
+    assert r.token_to_key.get("SyncK") == "sync_id"
+
+
+def test_parse_tokens_short_date_via_token_pattern_yy():
+    """Short date 22_01_26 via token_pattern with date_short_YY -> 2022-01-26."""
+    patterns = [
+        {"key": "date", "regex": r"^(?P<a>\d{2})[-_\.](?P<b>\d{2})[-_\.](?P<c>\d{2})$", "extract": "date_short_YY"},
+    ]
+    r = parse_tokens(["22_01_26"], token_patterns=patterns)
+    assert r.data.get("date") == "2022-01-26"
+
+
+def test_parse_tokens_short_date_via_token_pattern_dm():
+    """Short date 22_01_26 via token_pattern with date_short_DM -> 2026-01-22 (22=day, 26=year)."""
+    patterns = [
+        {"key": "date", "regex": r"^(?P<a>\d{2})[-_\.](?P<b>\d{2})[-_\.](?P<c>\d{2})$", "extract": "date_short_DM"},
+    ]
+    r = parse_tokens(["22_01_26"], token_patterns=patterns)
+    assert r.data.get("date") == "2026-01-22"
+
+
+def test_parse_tokens_m10_frame():
+    """M10_0: M10 = measurement (m), trailing 0 = frame. Only last plain digits as frame."""
+    r = parse_tokens(["m10", "0"], only_last_plain_digits_as_frame=True)
+    assert r.data.get("m") == 10
+    assert r.data.get("frame") == 0
+
+
+def test_parse_tokens_m14_14():
+    """M14_14: M14 = m, last 14 = frame."""
+    r = parse_tokens(["m14", "14"], only_last_plain_digits_as_frame=True)
+    assert r.data.get("m") == 14
+    assert r.data.get("frame") == 14
+
+
+def test_parse_tokens_m_10_0_split():
+    """When M and 10 and 0 are separate tokens (M10 split), m=10 from '10' after 'm', frame=0 from last."""
+    r = parse_tokens(["m", "10", "0"], only_last_plain_digits_as_frame=True)
+    assert r.data.get("m") == 10
+    assert r.data.get("frame") == 0
+
+
+def test_m10_0_and_m14_14_regression():
+    """Regressions-Test fuer M10_13mm\\M10_0.png und M14_9mm\\M14_14.png: m und frame muessen korrekt sein."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "M10_13mm").mkdir()
+        (root / "M10_13mm" / "M10_0.png").touch()
+        (root / "M14_9mm").mkdir()
+        (root / "M14_9mm" / "M14_14.png").touch()
+        rows, _ = run_indexer(root, root / "_out", config={"parallel_threshold": 1000})
+        by_rel = {r["relpath"].replace("\\", "/"): r for r in rows}
+        r10 = by_rel.get("M10_13mm/M10_0.png")
+        r14 = by_rel.get("M14_9mm/M14_14.png")
+        assert r10 is not None and r10.get("m") == 10 and r10.get("frame") == 0, f"M10_0: got m={r10.get('m') if r10 else None}, frame={r10.get('frame') if r10 else None}"
+        assert r14 is not None and r14.get("m") == 14 and r14.get("frame") == 14, f"M14_14: got m={r14.get('m') if r14 else None}, frame={r14.get('frame') if r14 else None}"
+
+
+def test_three_examples_m10_m20_m14_paths():
+    """
+    Direkt die drei Beispiele: M10_13mm\\M10_0.png, M20_3mm\\M20_0.png, M14_9mm\\M14_14.png, plus M18_5mm\\M18_18.png.
+    Erwartung: M10/M20 = Messung (m), _0 = Frame; M14/M18 = Messung, letzte Zahl = Frame (gleiche Zahl darf doppelt vorkommen).
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        cases = [
+            ("M10_13mm", "M10_0.png", 10, 0),
+            ("M20_3mm", "M20_0.png", 20, 0),
+            ("M14_9mm", "M14_14.png", 14, 14),
+            ("M18_5mm", "M18_18.png", 18, 18),
+        ]
+        for folder, filename, expected_m, expected_frame in cases:
+            (root / folder).mkdir(parents=True, exist_ok=True)
+            (root / folder / filename).touch()
+            path = root / folder / filename
+            folder_tokens, file_tokens, _ = tokenize_path_parts(path, root, 99)
+            pr = parse_tokens(file_tokens, only_last_plain_digits_as_frame=True)
+            assert pr.data.get("m") == expected_m, f"{folder}/{filename}: expected m={expected_m}, got {pr.data.get('m')}"
+            assert pr.data.get("frame") == expected_frame, f"{folder}/{filename}: expected frame={expected_frame}, got {pr.data.get('frame')}"
+
+
+def test_three_examples_via_run_indexer():
+    """Wie test_three_examples_*, aber mit run_indexer inkl. apply_majority_frame_logic – End-Zustand der Zeilen muss m und frame korrekt haben."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        cases = [
+            ("M10_13mm", "M10_0.png", 10, 0),
+            ("M20_3mm", "M20_0.png", 20, 0),
+            ("M14_9mm", "M14_14.png", 14, 14),
+            ("M18_5mm", "M18_18.png", 18, 18),
+        ]
+        for folder, filename, expected_m, expected_frame in cases:
+            (root / folder).mkdir(parents=True, exist_ok=True)
+            (root / folder / filename).touch()
+        rows, _ = run_indexer(root, root / "_out", config={"parallel_threshold": 1000})
+        by_path = {r["relpath"].replace("\\", "/"): r for r in rows}
+        for folder, filename, expected_m, expected_frame in cases:
+            rel = f"{folder}/{filename}"
+            r = by_path.get(rel)
+            assert r is not None, f"Row missing for {rel}"
+            assert r.get("m") == expected_m, f"{rel}: expected m={expected_m}, got {r.get('m')}"
+            assert r.get("frame") == expected_frame, f"{rel}: expected frame={expected_frame}, got {r.get('frame')}"
+
+
+def test_apply_majority_frame_logic():
+    """Minority rows with last numeric token as 'seq' get reassigned to 'frame' when majority is 'frame'."""
+    rows = [
+        {"_file_tokens": ["a", "100"], "_file_token_to_key": {"a": "run", "100": "frame"}, "run": 1, "frame": 100},
+        {"_file_tokens": ["a", "101"], "_file_token_to_key": {"a": "run", "101": "frame"}, "run": 1, "frame": 101},
+        {"_file_tokens": ["a", "18"], "_file_token_to_key": {"a": "run", "18": "seq"}, "run": 1, "seq": 18},
+    ]
+    apply_majority_frame_logic(rows)
+    assert rows[0].get("frame") == 100 and "seq" not in rows[0]
+    assert rows[1].get("frame") == 101
+    assert rows[2].get("frame") == 18 and rows[2].get("seq") is None
+    assert rows[2]["_file_token_to_key"]["18"] == "frame"

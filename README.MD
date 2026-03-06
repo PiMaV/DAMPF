@@ -76,6 +76,7 @@ Pipeline:
 - **Ablauf:** Root-Ordner waehlen → Crawl starten → Nomenklatur prufen/anpassen → Schema speichern (project.json/ini) und/oder In Datenbank speichern (SQLite).
 - **Schema:** Erkannte Struktur als project.json (oder project.ini) speichern; beliebigen anderen Root „gemaess Schema“ laden und erneut crawlen.
 - **Detected keys (4.):** Zwei Spalten: „Display name“ = Label in Exporten (Doppelklick zum Aendern), „Key“ = interner Parametername aus dem Parsing (nur Lesen).
+- **Ausreisser / Tippfehler:** Bei Abweichungen vom Schema oder moeglichen Tippfehlern in Ordnernamen zeigt DAMPF eine Outlier-Liste mit Vorschlaegen (z.B. seltener Ordnername aehnlich einem haeufigen). Optional: "Nur Outlier in Pfad-Ueberblick" filtert die angezeigten Pfade.
 - **EXE bauen:** `pyinstaller DAMPF.spec` → `dist\DAMPF.exe` (ein Datei, keine Python-Installation noetig).
 - Ausgabe (SQLite, JSONL/CSV) ist fuer **Wolke** (Dash/Plotly, SQL) und **Blitz** (Image Viewer) nutzbar.
 
