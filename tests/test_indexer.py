@@ -244,6 +244,14 @@ def test_m10_0_and_m14_14_regression():
         assert r14 is not None and r14.get("m") == 14 and r14.get("frame") == 14, f"M14_14: got m={r14.get('m') if r14 else None}, frame={r14.get('frame') if r14 else None}"
 
 
+def test_m10_0_with_stopword_m():
+    """Single 'm' must not be filtered even if in stopwords (M 10_0 -> m,10,0 -> m=10, frame=0)."""
+    tokens = tokenize_string("M 10_0", stopwords={"m"})
+    assert "m" in tokens, "m must be kept for measurement; got tokens: %s" % tokens
+    pr = parse_tokens(tokens, only_last_plain_digits_as_frame=True)
+    assert pr.data.get("m") == 10 and pr.data.get("frame") == 0
+
+
 def test_three_examples_m10_m20_m14_paths():
     """
     Direkt die drei Beispiele: M10_13mm\\M10_0.png, M20_3mm\\M20_0.png, M14_9mm\\M14_14.png, plus M18_5mm\\M18_18.png.

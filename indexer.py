@@ -158,7 +158,10 @@ def tokenize_string(
     norm = []
     for t in out:
         tt = t.strip().lower()
-        if not tt or tt in stopwords:
+        if not tt:
+            continue
+        if tt in stopwords and tt != "m":
+            # Never filter single "m" so M+digits (M10, M14) works when tokenized as ["m","10","0"]
             continue
         norm.append(tt)
     return norm
@@ -350,11 +353,6 @@ def parse_tokens(
         m = RE_FRAME.match(tok)
         if m:
             set_field("frame", int(m.group("n")), "frame", tok)
-            continue
-        # M + digits (M10, M14, M18) = measurement ID; must be recognised before RE_PARAM/plain-digits so M10_0 and M14_14 get m + frame
-        m_m = re.match(r"^m(\d{1,4})$", tok)
-        if m_m and "m" not in data:
-            set_field("m", int(m_m.group(1)), "m_digits", tok)
             continue
         m = RE_PARAM.match(tok)
         if m:

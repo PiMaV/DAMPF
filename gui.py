@@ -455,14 +455,28 @@ def _build_path_segments(row: dict, root_dir: str | None = None):
         file_str = parts[-1] if parts else ""
     folder_seg, file_seg = [], []
     keys_in_folder, keys_in_file = set(), set()
-    for token, key in folder_to_key.items():
-        for m in re.finditer(re.escape(token), folder_str, re.IGNORECASE):
-            folder_seg.append((m.start(), m.end(), key))
-            keys_in_folder.add(key)
-    for token, key in file_to_key.items():
-        for m in re.finditer(re.escape(token), file_str, re.IGNORECASE):
-            file_seg.append((m.start(), m.end(), key))
-            keys_in_file.add(key)
+
+    def segments_from_tokens_in_order(text: str, tokens: list, token_to_key: dict, keys_out: set):
+        """Match tokens in order so duplicate tokens (e.g. 14_14) get correct key each time."""
+        segs = []
+        pos = 0
+        for token in tokens:
+            key = token_to_key.get(token)
+            if key is None:
+                continue
+            m = re.search(re.escape(token), text[pos:], re.IGNORECASE)
+            if m:
+                start = pos + m.start()
+                end = pos + m.end()
+                segs.append((start, end, key))
+                keys_out.add(key)
+                pos = end
+        return segs
+
+    folder_tokens = row.get("_folder_tokens") or []
+    file_tokens = row.get("_file_tokens") or []
+    folder_seg = segments_from_tokens_in_order(folder_str, folder_tokens, folder_to_key, keys_in_folder)
+    file_seg = segments_from_tokens_in_order(file_str, file_tokens, file_to_key, keys_in_file)
     keys_dup = sorted(keys_in_folder & keys_in_file)
     return root_str, folder_str, file_str, folder_seg, file_seg, keys_dup
 
@@ -779,7 +793,7 @@ class DampfGui(QMainWindow):
         self.path_sample_spin = QSpinBox()
         self.path_sample_spin.setRange(3, 50)
         self.path_sample_spin.setValue(13)
-        self.path_sample_spin.setToolTip("How many sample paths to show (spread across data).")
+        self.path_sample_spin.setToolTip("How many sample paths to show (equidistant from first to last).")
         self.path_sample_spin.valueChanged.connect(self._refresh_path_overview)
         path_header.addWidget(self.path_sample_spin)
         path_header.addWidget(QLabel("samples"))
@@ -2053,8 +2067,10 @@ class DampfGui(QMainWindow):
             self._fill_path_overview([])
             return
         m = min(self.path_sample_spin.value(), n)
-        step = max(1, (n - 1) // m) if n > 1 else 1
-        indices = sorted(set(i for i in range(0, n, step)) | ({n - 1} if n > 1 else set()))[:m]
+        if m <= 1:
+            indices = [0] if n else []
+        else:
+            indices = [(i * (n - 1)) // (m - 1) for i in range(m)]
         sample_rows = [rows[i] for i in indices if i < n]
         self._last_sample_rows = sample_rows
         self._fill_path_overview(sample_rows)
