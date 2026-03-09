@@ -1,5 +1,5 @@
-# db_writer.py - Write index to SQLite gemaess BLITZ_Receiver_Contract (WOLKE/DAMPF).
-# Eine Datentabelle: id, relative_filepath_column (Pfad relativ zum DB-Verzeichnis), plus alle indexierten Felder.
+# db_writer.py - Write index to SQLite per BLITZ_Receiver_Contract (WOLKE/DAMPF).
+# One data table: id, relative_filepath_column (path relative to DB directory), plus all indexed fields.
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from key_lut import get_display_value, get_export_value_and_metadata, is_quantitative_val
 
-# Keys die nicht als Daten-Spalten in die Contract-Tabelle kommen (nur Metadaten/Interna)
+# Keys that do not become data columns in the contract table (metadata/internal only)
 ROW_META_KEYS = {
     "path", "relpath", "ext", "stem", "tokens", "trace", "recognized",
     "total_tokens", "confidence",
@@ -25,9 +25,9 @@ def _serialize_value(
     column_si_scale: Dict[str, int] | None = None,
 ) -> tuple[Any, str, str]:
     """
-    Fuer data-Tabelle. Returns (val, unit, raw_unit).
-    Bei column_si_scale.get(key)==0: Konvertierung zu SI.
-    lengths (Liste von val+unit): nur Numeric in Spalte, Unit in Metadaten.
+    For data table. Returns (val, unit, raw_unit).
+    When column_si_scale.get(key)==0: convert to SI.
+    lengths (list of val+unit): column numeric only, unit in metadata.
     """
     if v is None:
         return (None, "", "")
@@ -42,8 +42,8 @@ def _serialize_value(
 
 def _relpath_from_db(file_path: str | Path, db_path: Path) -> str:
     """
-    Pfad der Datei relativ zum Verzeichnis der DB-Datei (= Root).
-    Nur relative Berechnung gegen dieses Root, ohne Symlink-Aufloesung (kein resolve()).
+    File path relative to the DB file's directory (= root).
+    Relative calculation against this root only, no symlink resolution (no resolve()).
     """
     db_dir = Path(db_path).absolute().parent
     try:
@@ -62,13 +62,13 @@ def write_index_to_sqlite(
     used_keys: Optional[List[str]] = None,
 ) -> None:
     """
-    Erzeugt SQLite-DB gemaess BLITZ_Receiver_Contract:
-    - Eine Tabelle (Name aus schema_config["table_name"], Default "data") mit:
+    Create SQLite DB per BLITZ_Receiver_Contract:
+    - One table (name from schema_config["table_name"], default "data") with:
       id INTEGER PRIMARY KEY,
-      <relative_filepath_column> TEXT NOT NULL (Pfad relativ zum DB-Verzeichnis),
-      plus alle indexierten Felder als Spalten (REAL/INTEGER/TEXT).
-    - Optionale Tabelle "config" fuer DAMPF-Schema (load from DB).
-    groups wird nicht mehr in die DB geschrieben (Contract verlangt nur die eine Datentabelle).
+      <relative_filepath_column> TEXT NOT NULL (path relative to DB directory),
+      plus all indexed fields as columns (REAL/INTEGER/TEXT).
+    - Optional table "config" for DAMPF schema (load from DB).
+    groups is no longer written to DB (contract requires only the single data table).
     """
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,14 +76,14 @@ def write_index_to_sqlite(
     table_name = _quote_table(str(cfg.get("table_name") or "data"))
     relpath_col = _quote_id(str(cfg.get("relative_filepath_column") or "relpath"))
 
-    # Daten-Keys: bei used_keys nur diese; sonst alle (ohne Meta)
+    # Data keys: if used_keys given only those; else all (excluding meta)
     data_keys_set: set[str] = set()
     for r in rows:
         for k in r:
             if k not in ROW_META_KEYS:
                 data_keys_set.add(k)
     data_keys = [k for k in sorted(used_keys) if k in data_keys_set] if used_keys else sorted(data_keys_set)
-    # Spaltennamen fuer SQL: nur alphanumerisch/Unterstrich (vermeidet "unrecognized token" z.B. "{")
+    # Column names for SQL: alphanumeric/underscore only (avoids "unrecognized token" e.g. "{")
     col_names: List[str] = []
     seen: set[str] = set()
     for k in data_keys:
@@ -125,7 +125,7 @@ def write_index_to_sqlite(
         conn.execute("DROP TABLE IF EXISTS config")
         conn.execute("DROP TABLE IF EXISTS column_metadata")
 
-        # Spalten: id, relpath_col, dann col_names; Typen: int->INTEGER, float->REAL, sonst TEXT
+        # Columns: id, relpath_col, then col_names; types: int->INTEGER, float->REAL, else TEXT
         col_defs = ["id INTEGER PRIMARY KEY AUTOINCREMENT", relpath_col + " TEXT NOT NULL"]
         for i, cname in enumerate(col_names):
             col_defs.append(cname + " " + _sql_type_for_key(rows, data_keys[i], use_extracted_val=True))
@@ -172,7 +172,7 @@ def write_index_to_sqlite(
 
 
 def _safe_identifier(name: str, default: str) -> str:
-    """Nur alphanumerisch und Unterstrich; sonst default. Verhindert Token-Fehler (z.B. '{' in Namen)."""
+    """Alphanumeric and underscore only; else default. Prevents token errors (e.g. '{' in names)."""
     if not name or not isinstance(name, str):
         return default
     s = "".join(c for c in name if c.isalnum() or c == "_")
@@ -180,17 +180,17 @@ def _safe_identifier(name: str, default: str) -> str:
 
 
 def _quote_table(name: str) -> str:
-    """Tabellenname: nur alphanumerisch/Unterstrich."""
+    """Table name: alphanumeric and underscore only."""
     return _safe_identifier(str(name), "data")
 
 
 def _quote_id(name: str) -> str:
-    """Spaltenname fuer SQL: nur alphanumerisch/Unterstrich, dann unquoted (kein '{' etc.)."""
+    """Column name for SQL: alphanumeric/underscore only, then unquoted (no '{' etc.)."""
     return _safe_identifier(str(name), "col")
 
 
 def _sql_type_for_key(rows: List[Dict[str, Any]], key: str, use_extracted_val: bool = False) -> str:
-    """INTEGER, REAL oder TEXT je nach Vorkommen in rows."""
+    """INTEGER, REAL or TEXT depending on occurrence in rows."""
     has_int = has_float = has_other = False
     for r in rows:
         v = r.get(key)

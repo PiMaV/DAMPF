@@ -1,4 +1,4 @@
-# schema_io.py - Load/save project schema (project.json or project.ini) for "Root gemaess Schema laden".
+# schema_io.py - Load/save project schema (project.json or project.ini) for "Load root according to schema".
 
 from __future__ import annotations
 
@@ -6,10 +6,9 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Keys that must be lists in JSON (stored as list, converted to set/tuple when building indexer config)
-LIST_KEYS = ("allowed_suffixes", "group_keys", "stopwords")
+# Keys that must be lists in JSON (stored as list, converted to set when building indexer config)
+LIST_KEYS = ("allowed_suffixes", "stopwords")
 SET_KEYS = ("allowed_suffixes", "stopwords")
-TUPLE_KEYS = ("group_keys",)
 
 # Default schema keys and types for validation
 DEFAULT_SCHEMA = {
@@ -17,7 +16,6 @@ DEFAULT_SCHEMA = {
     "output_dir": "",
     "allowed_suffixes": [".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".csv", ".tsv", ".txt", ".dat", ".asc", ".npy", ".npz", ".h5", ".hdf5", ".json", ".yaml", ".yml"],
     "folder_token_depth": 99,
-    "group_keys": ["date", "experiment", "sample", "run", "rep"],
     "recursive": True,
     "include_hidden": False,
     "db_path": "",
@@ -38,8 +36,6 @@ def config_to_schema(config: Dict[str, Any]) -> Dict[str, Any]:
     for k, v in config.items():
         if k in ("allowed_suffixes", "stopwords") and isinstance(v, (set, frozenset)):
             out[k] = sorted(v)
-        elif k == "group_keys" and isinstance(v, tuple):
-            out[k] = list(v)
         elif isinstance(v, (set, frozenset)):
             out[k] = sorted(v)
         elif isinstance(v, tuple):
@@ -58,8 +54,6 @@ def schema_to_config(schema: Dict[str, Any]) -> Dict[str, Any]:
         cfg["allowed_suffixes"] = set(cfg["allowed_suffixes"]) or DEFAULT_ALLOWED_SUFFIXES
     if "stopwords" in cfg and isinstance(cfg["stopwords"], list):
         cfg["stopwords"] = set(cfg["stopwords"]) if cfg["stopwords"] else DEFAULT_STOPWORDS
-    if "group_keys" in cfg and isinstance(cfg["group_keys"], list):
-        cfg["group_keys"] = tuple(cfg["group_keys"]) if cfg["group_keys"] else ("date", "experiment", "sample", "run", "rep")
     return cfg
 
 
@@ -110,8 +104,6 @@ def load_project_ini(path: str | Path) -> Optional[Dict[str, Any]]:
                         key = k
                     if key in ("indexer.allowed_suffixes", "allowed_suffixes"):
                         config["allowed_suffixes"] = [x.strip() for x in v.split(",") if x.strip()]
-                    elif key in ("indexer.group_keys", "group_keys"):
-                        config["group_keys"] = [x.strip() for x in v.split(",") if x.strip()]
                     elif key in ("indexer.folder_token_depth", "folder_token_depth"):
                         try:
                             config["folder_token_depth"] = int(v)
@@ -138,14 +130,12 @@ def save_project_ini(path: str | Path, config: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = config_to_schema(config)
     lines = ["[paths]", f"root_dir = {data.get('root_dir', '')}", f"output_dir = {data.get('output_dir', '')}", f"db_path = {data.get('db_path', '')}", "", "[indexer]"]
-    for k in ("allowed_suffixes", "group_keys", "folder_token_depth", "recursive", "include_hidden"):
+    for k in ("allowed_suffixes", "folder_token_depth", "recursive", "include_hidden"):
         v = data.get(k)
         if v is None:
             continue
         if k == "allowed_suffixes":
             lines.append("allowed_suffixes = " + ", ".join(v))
-        elif k == "group_keys":
-            lines.append("group_keys = " + ", ".join(v))
         elif k == "folder_token_depth":
             lines.append(f"folder_token_depth = {v}")
         elif k in ("recursive", "include_hidden"):

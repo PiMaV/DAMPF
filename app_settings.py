@@ -44,6 +44,7 @@ def load_settings() -> dict:
         "root_dir": "",
         "output_dir": "",
         "db_path": "",
+        "group_choices": [],
     }
     if not p.is_file():
         return out
@@ -70,6 +71,8 @@ def load_settings() -> dict:
             for k in ("root_dir", "output_dir", "db_path"):
                 if k in cfg["paths"]:
                     out[k] = cfg["paths"][k].strip()
+        if cfg.has_section("groups") and "group_choices" in cfg["groups"]:
+            out["group_choices"] = [x.strip() for x in cfg["groups"]["group_choices"].split(",") if x.strip()]
     except (configparser.Error, OSError):
         pass
     return out
@@ -85,8 +88,9 @@ def save_settings(
     splitter_sizes: str = "",
     main_splitter_sizes: str = "",
     outer_splitter_sizes: str = "",
+    group_choices: list | None = None,
 ) -> None:
-    """Save window size, paths, theme, splitter to dampf.ini."""
+    """Save window size, paths, theme, splitter, and user group choices to dampf.ini."""
     p = _get_settings_path()
     cfg = configparser.ConfigParser()
     dampf = {
@@ -108,6 +112,8 @@ def save_settings(
         "output_dir": output_dir or "",
         "db_path": db_path or "",
     }
+    if group_choices is not None:
+        cfg["groups"] = {"group_choices": ", ".join(str(c) for c in group_choices)}
     try:
         with p.open("w", encoding="utf-8") as f:
             cfg.write(f)

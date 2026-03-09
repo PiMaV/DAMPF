@@ -1,7 +1,6 @@
 # filename_semantic_indexer.py
 # VS Code friendly: edit variables below, run as a script. Uses indexer module.
 
-import json
 from pathlib import Path
 
 from indexer import (
@@ -22,7 +21,6 @@ OUTPUT_DIR = r"C:\DATA\MEASUREMENTS\_index"
 RECURSIVE = True
 INCLUDE_HIDDEN = False
 FOLDER_TOKEN_DEPTH = 99
-GROUP_KEYS = ("date", "experiment", "sample", "run", "rep")
 ALLOWED_SUFFIXES = DEFAULT_ALLOWED_SUFFIXES
 STOPWORDS = DEFAULT_STOPWORDS
 MODALITY_MAP = DEFAULT_MODALITY_MAP
@@ -32,24 +30,20 @@ def main() -> None:
     config = {
         "allowed_suffixes": ALLOWED_SUFFIXES,
         "folder_token_depth": FOLDER_TOKEN_DEPTH,
-        "group_keys": GROUP_KEYS,
         "recursive": RECURSIVE,
         "include_hidden": INCLUDE_HIDDEN,
         "stopwords": STOPWORDS,
         "modality_map": MODALITY_MAP,
     }
-    rows, groups = run_indexer(ROOT_DIR, OUTPUT_DIR, config)
+    rows, _ = run_indexer(ROOT_DIR, OUTPUT_DIR, config)
 
     out_dir = Path(OUTPUT_DIR).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     jsonl_path = out_dir / "index.jsonl"
     csv_path = out_dir / "index.csv"
-    groups_path = out_dir / "groups.json"
 
     write_jsonl(rows, jsonl_path)
     write_csv(rows, csv_path)
-    with groups_path.open("w", encoding="utf-8") as f:
-        json.dump(groups, f, ensure_ascii=False, indent=2)
 
     if rows:
         confs = [r["confidence"] for r in rows]
@@ -61,7 +55,6 @@ def main() -> None:
         print(f"Avg confidence: {avg_conf:.3f} | >=0.8: {hi} | 0.5-0.8: {med} | <0.5: {lo}")
         print(f"Wrote: {jsonl_path}")
         print(f"Wrote: {csv_path}")
-        print(f"Wrote: {groups_path}")
     else:
         print("No matching files found. Check ROOT_DIR and ALLOWED_SUFFIXES.")
 

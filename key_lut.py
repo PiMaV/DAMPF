@@ -1,13 +1,12 @@
 # key_lut.py - LUT for key categories, display names, and units (extensible by user).
-# Used for tree view and GROUP_KEYS suggestions by unit/category.
-# DAMPF defines the schema; WOLKE/BLITZ consume it.
+# Used for tree view. DAMPF defines the schema; WOLKE/BLITZ consume it.
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
 # --- Units-LUT: key -> (SI base unit, typical prefixes, short label) ---
-# Enthaelt alle geaengigten Versionen und SI-Prefixe.
+# Contains all common variants and SI prefixes.
 UNITS_LUT: Dict[str, Tuple[str, Tuple[str, ...], str]] = {
     "voltage": ("V", ("uV", "mV", "V", "kV"), "Voltage"),
     "current": ("A", ("uA", "mA", "A"), "Current"),
@@ -20,11 +19,11 @@ UNITS_LUT: Dict[str, Tuple[str, Tuple[str, ...], str]] = {
     "gas_flow": ("slm", ("slm",), "Gas flow"),  # 5slmAr, 10slmN2
 }
 
-# Gas keys (Zahl+Buchstabe wie 300He, 300N2) -> unit %
+# Gas keys (number+letter e.g. 300He, 300N2) -> unit %
 GAS_KEYS = frozenset({"he", "n2", "co2"})
 
 def unit_scale(unit: str) -> float:
-    """Multiplikator um von unit zu SI zu kommen (z.B. us->1e-6)."""
+    """Multiplier from unit to SI (e.g. us->1e-6)."""
     u = unit.lower().replace("µ", "u")
     scales = {
         "ns": 1e-9, "us": 1e-6, "µs": 1e-6, "ms": 1e-3, "s": 1.0,
@@ -38,7 +37,7 @@ def unit_scale(unit: str) -> float:
 
 
 def convert_val_to_si(val: float, unit: str) -> float:
-    """Konvertiert Wert in SI-Basiseinheit."""
+    """Convert value to SI base unit."""
     return val * unit_scale(unit)
 
 
@@ -48,9 +47,9 @@ SI_EXPONENT_PREFIX: Dict[int, str] = {
     3: "k", 6: "M", 9: "G", 12: "T",
 }
 
-# unit_scale liefert 10^exp; Mapping unit -> exponent fuer raw
+# unit_scale yields 10^exp; mapping unit -> exponent for raw
 def unit_to_exponent(unit: str) -> int:
-    """Exponent (log10 des Skalenfaktors): us->-6, s->0, km->3."""
+    """Exponent (log10 of scale factor): us->-6, s->0, km->3."""
     import math
     sc = unit_scale(unit)
     if sc <= 0:
@@ -59,14 +58,14 @@ def unit_to_exponent(unit: str) -> int:
 
 
 def exponent_to_unit(base_unit: str, exp: int) -> str:
-    """z.B. exponent_to_unit('s', -3) -> 'ms'; exp 0 -> base."""
+    """E.g. exponent_to_unit('s', -3) -> 'ms'; exp 0 -> base."""
     pre = SI_EXPONENT_PREFIX.get(exp, "")
     if base_unit == "%":
         return "%"
     return pre + base_unit
 
 
-# SI-Basiseinheit pro Key (fuer Konvertierung)
+# SI base unit per key (for conversion)
 SI_BASE_UNIT: Dict[str, str] = {
     "exposure": "s",
     "voltage": "v",
@@ -111,7 +110,7 @@ DEFAULT_KEY_CATEGORIES: Dict[str, str] = {
 }
 
 # Key -> suggested display name. User can override in GUI / project.json "key_display_names".
-# Fuer quantitative Keys: Display wird mit unit ergaenzt via get_display_name(key, unit).
+# For quantitative keys: display is augmented with unit via get_display_name(key, unit).
 DEFAULT_KEY_DISPLAY_NAMES: Dict[str, str] = {
     "lengths": "Length",
     "exposure": "Exposure",
@@ -134,7 +133,7 @@ DEFAULT_KEY_DISPLAY_NAMES: Dict[str, str] = {
     "experiment": "Experiment",
 }
 
-# Legacy: map old keys to new (fuer Rueckwaertskompatibilitaet)
+# Legacy: map old keys to new (for backward compatibility)
 _LEGACY_KEY_MAP = {
     "exposure_s": "exposure",
     "exposure_us": "exposure",
@@ -146,7 +145,7 @@ _LEGACY_KEY_MAP = {
 
 
 def _normalize_key(key: str) -> str:
-    """Gibt neuen Key zurueck falls Legacy-Mapping existiert."""
+    """Return new key if legacy mapping exists."""
     return _LEGACY_KEY_MAP.get(key, key)
 
 
@@ -157,7 +156,7 @@ def get_category(key: str, key_categories: Dict[str, str] | None = None) -> str:
 
 
 def get_display_name(key: str, key_display_names: Dict[str, str] | None = None, unit: Optional[str] = None) -> str:
-    """Display-Name fuer Key. Wenn unit gegeben und Key quantitativ: z.B. 'Exposure (us)'."""
+    """Display name for key. If unit given and key quantitative: e.g. 'Exposure (us)'."""
     k = _normalize_key(key)
     lut = key_display_names or {}
     base = lut.get(k) or lut.get(key) or DEFAULT_KEY_DISPLAY_NAMES.get(k) or DEFAULT_KEY_DISPLAY_NAMES.get(key) or key
@@ -167,7 +166,7 @@ def get_display_name(key: str, key_display_names: Dict[str, str] | None = None, 
 
 
 def get_unit_info(key: str) -> Optional[Tuple[str, Tuple[str, ...], str]]:
-    """Gibt (si_base, prefixe, label) fuer Key oder None (quantitative Keys)."""
+    """Return (si_base, prefixes, label) for key or None (quantitative keys)."""
     k = _normalize_key(key)
     if k in UNITS_LUT:
         return UNITS_LUT[k]
@@ -177,19 +176,19 @@ def get_unit_info(key: str) -> Optional[Tuple[str, Tuple[str, ...], str]]:
 
 
 def is_quantitative_val(v: Any) -> bool:
-    """True wenn v ein val+unit Dict ist ({"val": x, "unit": "us"})."""
+    """True if v is a val+unit dict ({"val": x, "unit": "us"})."""
     return isinstance(v, dict) and "val" in v and "unit" in v
 
 
 def extract_val_for_export(v: Any) -> Any:
-    """Fuer DB/CSV: bei val+unit Dict nur den numerischen Wert liefern."""
+    """For DB/CSV: for val+unit dict return only the numeric value."""
     if is_quantitative_val(v):
         return v.get("val")
     return v
 
 
 def get_display_value(value: Any, row: Optional[Dict[str, Any]] = None) -> Any:
-    """Fuer Anzeige/Export: Original-Case nutzen wenn row._token_original vorhanden."""
+    """For display/export: use original case when row._token_original is present."""
     if row is not None and isinstance(value, str):
         orig = row.get("_token_original") or {}
         if value in orig:
@@ -204,8 +203,8 @@ def get_export_value_and_metadata(
 ) -> tuple[Any, str, str]:
     """
     (val_to_write, unit_for_meta, raw_unit).
-    column_si_scale: key -> exponent (-3=m, 0=base, 6=M). None/fehlend = raw behalten.
-    Bei lengths (Liste von val+unit): nimmt erstes Element, Spalte = nur Numeric; Unit in Metadaten.
+    column_si_scale: key -> exponent (-3=m, 0=base, 6=M). None/missing = keep raw.
+    For lengths (list of val+unit): take first element, column = numeric only; unit in metadata.
     """
     if isinstance(v, list) and v and is_quantitative_val(v[0]):
         v = v[0]
@@ -223,7 +222,7 @@ def get_export_value_and_metadata(
 
 
 def format_val_unit(v: Any) -> str:
-    """Formatierung fuer Anzeige: '500 us' oder '5 slm Ar'."""
+    """Format for display: '500 us' or '5 slm Ar'."""
     if is_quantitative_val(v):
         val, unit = v.get("val"), v.get("unit", "")
         gas = v.get("gas", "")
@@ -274,17 +273,4 @@ def build_key_tree(
     for c in ordered_cats:
         if c in by_cat:
             out.append((c, by_cat[c]))
-    return out
-
-
-def suggest_group_keys_by_category(
-    detected_keys: List[str],
-    key_categories: Dict[str, str] | None = None,
-) -> List[str]:
-    """Suggest GROUP_KEYS order: by category priority, then by key."""
-    tree = build_key_tree(detected_keys, key_categories, None)
-    out: List[str] = []
-    for _cat, pairs in tree:
-        for k, _ in pairs:
-            out.append(k)
     return out

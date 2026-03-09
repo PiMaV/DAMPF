@@ -14,7 +14,6 @@ from pathlib import Path
 from indexer import (
     DEFAULT_ALLOWED_SUFFIXES,
     run_indexer,
-    group_rows,
     suggest_nomenclature,
     suggest_categorical_keys,
     build_column_metadata,
@@ -26,7 +25,6 @@ from db_writer import write_index_to_sqlite, load_schema_from_db
 from outlier_detection import detect_schema_outliers, detect_typo_candidates
 from key_lut import (
     build_key_tree,
-    suggest_group_keys_by_category,
     exponent_to_unit,
     format_val_unit,
     get_category,
@@ -49,7 +47,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QProgressDialog, QMenu,
 )
 
-# Mind. 20 klar unterschiedliche Farben – keine Duplikate fuer verschiedene Parameter
+# At least 20 distinct colors – no duplicates for different parameters
 _KEY_COLORS_LIGHT = [
     "#b3d9ff", "#c8e6c9", "#fff9c4", "#e1bee7", "#ffcdd2", "#b2ebf2", "#d7ccc8", "#cfd8dc",
     "#ffccbc", "#d1c4e9", "#b2dfdb", "#ffecb3", "#c5e1a5", "#f8bbd0", "#b3e5fc", "#dcedc8",
@@ -60,6 +58,9 @@ _KEY_COLORS_DARK = [
     "#d84315", "#5e35b1", "#00695c", "#f57f17", "#558b2f", "#ad1457", "#0277bd", "#7cb342",
     "#afb42b", "#e64a19", "#4527a0",
 ]
+
+# Default group suggestions (optional; empty = no group). User can add more; those are persisted in dampf.ini.
+DEFAULT_GROUP_CHOICES = ("", "Camera", "Run", "Source", "Experiment", "Modality")
 
 STYLESHEET_LIGHT = """
     QWidget { background-color: #e8eaed; color: #202124; }
@@ -129,7 +130,7 @@ def _key_stats(rows: list, keys: list) -> dict:
                 vn = format_val_unit(v)
                 nums.append(float(v.get("val", 0)))
             elif isinstance(v, list) and v and is_quantitative_val(v[0]):
-                # lengths etc.: Liste von val+unit -> alle Werte fuer min/max/mean
+                # lengths etc.: list of val+unit -> all values for min/max/mean
                 vn = ", ".join(format_val_unit(x) for x in v[:5])
                 if len(v) > 5:
                     vn += " ..."
@@ -510,7 +511,7 @@ def _icon_path() -> Path:
 class DampfGui(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("DAMPF - Filename Semantic Indexer")
+        self.setWindowTitle("DAMPF — Data Aggregation & Modular Processing Framework")
         p = _icon_path()
         if p.exists():
             self.setWindowIcon(QIcon(str(p)))
@@ -522,7 +523,6 @@ class DampfGui(QMainWindow):
         self.root_dir = settings.get("root_dir", "")
         self.output_dir = settings.get("output_dir", "")
         self.db_path = settings.get("db_path", "")
-        self.group_keys = "date, experiment, sample, run, rep"
         self.folder_depth = 99
         self.recursive = True
         self.include_hidden = False
@@ -531,10 +531,13 @@ class DampfGui(QMainWindow):
         self._all_rows: list = []  # all crawled files (all types)
         self._ext_filter: str | None = None  # None = all, ".tif" = only tif
         self._folder_includes: set[str] = set()  # folder paths to include (empty = all)
-        self.groups: dict = {}
         self.current_config: dict = {}
         self.key_display_names: dict = {}
         self.key_categories: dict = {}
+        self.key_group_label: dict = {}
+        default_choices = list(DEFAULT_GROUP_CHOICES)
+        extra = [x for x in settings.get("group_choices", []) if x and x not in default_choices]
+        self.key_group_choices = default_choices + extra
         self.key_is_categorical: dict = {}
         self.key_si_scale: dict = {}
         self.key_is_used: dict = {}
@@ -601,7 +604,7 @@ class DampfGui(QMainWindow):
         adv_l.addWidget(QLabel("Output:"), 0, 0)
         self.output_edit = QLineEdit()
         self.output_edit.setText(self.output_dir)
-        self.output_edit.setToolTip("Folder for index.jsonl, index.csv, groups.json. Default: root/_index")
+        self.output_edit.setToolTip("Folder for index.jsonl, index.csv. Default: root/_index")
         adv_l.addWidget(self.output_edit, 0, 1)
         browse_out_btn = QPushButton("Browse", clicked=self._browse_output)
         browse_out_btn.setToolTip("Select output folder for export files.")
@@ -646,34 +649,6 @@ class DampfGui(QMainWindow):
         row1.addWidget(self.depth_spin)
         row1.addStretch()
         crawl_l.addLayout(row1)
-        # Group keys: hidden by default (see docs/Group_Keys_Reference.md). Uncomment .hide() or setVisible(True) to show.
-        self._group_keys_container = QWidget()
-        gk_row = QHBoxLayout(self._group_keys_container)
-        gk_label = QLabel("Group keys (for DB / export only):")
-        gk_label.setToolTip(
-            "Group keys do NOT change which parameters are extracted or shown in the key tree. "
-            "They only define how files are bundled into 'groups' for export (groups.json) and for the DB schema. "
-        )
-        gk_row.addWidget(gk_label)
-        self.group_keys_edit = QLineEdit()
-        self.group_keys_edit.setText(self.group_keys)
-        self.group_keys_edit.setPlaceholderText("e.g. date, experiment, sample")
-        self.group_keys_edit.setToolTip("Which keys define one logical group (for groups.json + DB only).")
-        self.group_keys_edit.editingFinished.connect(self._on_group_keys_changed)
-        self._group_keys_debounce = QTimer(self)
-        self._group_keys_debounce.setSingleShot(True)
-        self._group_keys_debounce.timeout.connect(self._on_group_keys_changed)
-        self.group_keys_edit.textChanged.connect(self._debounce_group_keys_update)
-        gk_row.addWidget(self.group_keys_edit)
-        gk_choose_btn = QPushButton("Choose…")
-        gk_choose_btn.setToolTip("Select group keys from detected keys only.")
-        gk_choose_btn.clicked.connect(self._choose_group_keys_from_detected)
-        gk_row.addWidget(gk_choose_btn)
-        self.group_keys_count_label = QLabel("")
-        self.group_keys_count_label.setToolTip("Number of groups (for export).")
-        gk_row.addWidget(self.group_keys_count_label)
-        crawl_l.addWidget(self._group_keys_container)
-        self._group_keys_container.hide()
         top_content_l.addWidget(crawl_g)
         ext_filter_row = QHBoxLayout()
         ext_filter_lbl = QLabel("Filter by type:")
@@ -692,25 +667,38 @@ class DampfGui(QMainWindow):
         # Folder inclusion tree (after crawl)
         self.folder_tree_g = QGroupBox("3. Include folders (uncheck to exclude, changes apply immediately)")
         self.folder_tree_g.setToolTip("After crawl: choose which folders to include. Unchecked = excluded from index.")
+        self.folder_tree_g.setMinimumHeight(250)  # Tree + gap + buttons: scrollbar and list never overlap
         folder_tree_l = QVBoxLayout(self.folder_tree_g)
         folder_tree_l.setSpacing(2)
         folder_tree_l.setContentsMargins(4, 8, 4, 4)
         self.folder_tree_w = QTreeWidget()
         self.folder_tree_w.setHeaderLabels(["Idx", "Include", "Folder", "Files"])
         self.folder_tree_w.setToolTip("Uncheck folders to exclude from index (e.g. RESULTS, output). Changes apply immediately.")
-        self.folder_tree_w.setMinimumHeight(26)
-        self.folder_tree_w.setMaximumHeight(180)
+        self.folder_tree_w.setMinimumHeight(150)  # enough for scrollbar to show cleanly
+        self.folder_tree_w.setMaximumHeight(280)  # cap so layout stays stable; scroll when more folders
         self.folder_tree_w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.folder_tree_w.itemChanged.connect(self._on_folder_check_changed)
         folder_tree_l.addWidget(self.folder_tree_w, 1)  # stretch 1 = 80%+
+        tree_btn_gap = QFrame()
+        tree_btn_gap.setFixedHeight(10)
+        tree_btn_gap.setFrameShape(QFrame.Shape.NoFrame)
+        tree_btn_gap.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        folder_tree_l.addWidget(tree_btn_gap, 0)
+        folder_btn_bar = QWidget()
+        folder_btn_bar.setMinimumHeight(56)
+        folder_btn_bar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        folder_btn_l = QVBoxLayout(folder_btn_bar)
+        folder_btn_l.setContentsMargins(0, 2, 0, 0)
+        folder_btn_l.setSpacing(4)
         suggest_btn = QPushButton("Suggest exclude (RESULTS, output, ...)", clicked=self._suggest_exclude)
         suggest_btn.setToolTip("Auto-uncheck folders with names like results, output, processed, temp, etc.")
-        folder_tree_l.addWidget(suggest_btn, 0)
+        folder_btn_l.addWidget(suggest_btn)
         self._collapse_top_btn = QPushButton("\u25B2 Collapse 1-3 for better view", clicked=self._toggle_top_section)
         self._collapse_top_btn.setToolTip("Collapse Root, Crawl, Include folders to get more space for keys and results.")
         self._collapse_top_btn.setMinimumWidth(260)
         self._collapse_top_btn.setStyleSheet("font-weight: bold; padding: 6px 12px;")
-        folder_tree_l.addWidget(self._collapse_top_btn, 0)
+        folder_btn_l.addWidget(self._collapse_top_btn)
+        folder_tree_l.addWidget(folder_btn_bar, 0)
         top_content_l.addWidget(self.folder_tree_g, 1)
         self._expand_bar = QFrame()
         self._expand_bar.setFrameShape(QFrame.Shape.NoFrame)
@@ -751,17 +739,19 @@ class DampfGui(QMainWindow):
         info_row.addWidget(self.dup_label)
         self.schema_summary_label = QLabel("")
         self.schema_summary_label.setStyleSheet("font-size: 11px; font-weight: bold; padding: 0 8px 0 0;")
-        self.schema_summary_label.setToolTip("Anzahl der Dateien. Pro Key: Spalte Full = wie viele den Key haben, (−X) = wie viele fehlen.")
+        self.schema_summary_label.setToolTip("Number of files. Per key: Full column = how many have the key, (−X) = how many are missing.")
         info_row.addWidget(self.schema_summary_label, 1)
         keys_top_ll.addLayout(info_row)
-        detected_keys_label = QLabel("Detected keys (double-click Key to edit display name; Cat = categorical):")
+        detected_keys_label = QLabel("Detected keys (double-click Display name to edit; Group optional, pick or type):")
         detected_keys_label.setToolTip(
-            "Parameters from filenames. Display name = label in exports (double-click to edit). Key = internal parameter name from parsing (read-only)."
+            "Parameters from filenames. Display name = label in exports (double-click to edit). Key = internal name (read-only). "
+            "Group = optional; choose from list or type a new label (available for all keys immediately)."
         )
         keys_top_ll.addWidget(detected_keys_label)
         self.key_tree = QTreeWidget()
-        self.key_tree.setHeaderLabels(["Used", "Cat", "Uniques", "Full", "Display name", "Key", "SI exp", "Unit", "Min", "Max", "Mean"])
-        self.key_tree.setMinimumHeight(200)
+        self.key_tree.setHeaderLabels(["Used", "Cat", "Uniques", "Full", "Display name", "Key", "SI exp", "Unit", "Min", "Max", "Mean", "Group (optional)"])
+        self.key_tree.setMinimumHeight(150)
+        self.key_tree.setMaximumHeight(380)  # cap so layout stays stable; scroll when more keys
         self.key_tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.key_tree.setColumnWidth(0, 50)
         self.key_tree.setColumnWidth(1, 50)
@@ -769,7 +759,8 @@ class DampfGui(QMainWindow):
         self.key_tree.setColumnWidth(5, 80)
         self.key_tree.setStyleSheet("font-size: 11px;")
         self.key_tree.setToolTip(
-            "Used=include in export. Display name=label in exports (double-click to edit). Key=internal parameter name (read-only). Full, Cat, SI exp, Unit."
+            "Used=include in export. Display name=label in exports (double-click to edit). Key=internal name (read-only). "
+            "Group (optional): pick or type a label (e.g. Camera, Source); leave empty if not needed. New labels are available for all keys immediately."
         )
         self.key_tree.itemSelectionChanged.connect(self._on_tree_select)
         self.key_tree.itemChanged.connect(self._on_key_tree_item_changed)
@@ -778,6 +769,7 @@ class DampfGui(QMainWindow):
 
         # Bottom splitter: 4. Detected keys | 5. Results (vertical, resizable)
         bottom_split = QSplitter(Qt.Orientation.Vertical)
+        bottom_split.setMinimumWidth(200)  # keep scrollbars visible when window is narrow
         bottom_split.addWidget(struct_g)
 
         # 5. Results (path samples, extraction preview)
@@ -826,11 +818,52 @@ class DampfGui(QMainWindow):
         self.key_samples_label.setToolTip("Sample values for selected parameter. Click a key in the tree above.")
         results_l.addWidget(self.key_samples_label)
 
+        # Outliers (directly after Results – see if we have dataset problems; 0 = green, else count + expand to see why)
+        outlier_g = QGroupBox("Outliers")
+        outlier_g.setToolTip(
+            "Paths that deviate from the schema (low recognition) or likely typos in folder names. "
+            "Typo: rare name similar to a frequent one (e.g. MultFiLI -> MultFilI?)."
+        )
+        outlier_l = QVBoxLayout(outlier_g)
+        self.outlier_table = QTableWidget()
+        self.outlier_table.setColumnCount(3)
+        self.outlier_table.setHorizontalHeaderLabels(["Path", "Type", "Detail"])
+        self.outlier_table.setMinimumHeight(120)
+        self.outlier_table.setMaximumHeight(320)
+        self.outlier_table.horizontalHeader().setStretchLastSection(True)
+        self.outlier_table.setToolTip("Schema deviation or possible typo. Correct manually or via Unrecognized -> Parameters.")
+        self.outlier_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.outlier_table.customContextMenuRequested.connect(self._outlier_table_context_menu)
+        outlier_l.addWidget(self.outlier_table)
+        outlier_container = QWidget()
+        outlier_container_l = QVBoxLayout(outlier_container)
+        outlier_container_l.setContentsMargins(0, 0, 0, 0)
+        outlier_container_l.setSpacing(0)
+        self._outlier_toggle_btn = QPushButton("Outliers: 0 \u25BC", clicked=self._toggle_outlier_section)
+        self._outlier_toggle_btn.setToolTip("Paths with schema deviation or possible typos. Expand to see details. 0 = none (green).")
+        self._outlier_toggle_btn.setStyleSheet("text-align: left; padding: 4px 8px;")
+        outlier_container_l.addWidget(self._outlier_toggle_btn)
+        outlier_container_l.addWidget(outlier_g)
+        self._outlier_g = outlier_g
+        self._outlier_section_visible = False
+        self._outlier_relpaths: set = set()
+        self._outlier_count = 0
+        outlier_g.hide()
+        results_l.addWidget(outlier_container)
+
+        self.outlier_only_cb = QCheckBox("Path samples above: show only outlier paths")
+        self.outlier_only_cb.setToolTip(
+            "When checked: the path samples box shows only paths that are outliers (schema deviation or typo), "
+            "instead of the normal spread. Use this to inspect problematic paths in context."
+        )
+        self.outlier_only_cb.stateChanged.connect(self._refresh_path_overview)
+        results_l.addWidget(self.outlier_only_cb)
+
         # Token Patterns (collapsible): regex -> key, applied after built-in, before custom_token_map; incl. short date
         token_patterns_g = QGroupBox("Token Patterns")
         token_patterns_g.setToolTip(
             "Regex -> Key rules applied during crawl (after built-in, before exact token mappings). "
-            "Short date (z.B. 22_01_26): Extract date_short_YY oder date_short_DM."
+            "Short date (e.g. 22_01_26): Extract date_short_YY or date_short_DM."
         )
         tp_l = QVBoxLayout(token_patterns_g)
         self.token_patterns_table = QTableWidget()
@@ -852,7 +885,7 @@ class DampfGui(QMainWindow):
         tp_container_l.setContentsMargins(0, 0, 0, 0)
         tp_container_l.setSpacing(0)
         self._tp_toggle_btn = QPushButton("Token Patterns \u25BC", clicked=self._toggle_token_patterns_section)
-        self._tp_toggle_btn.setToolTip("Regex rules for token recognition. Short date: Extract date_short_YY oder date_short_DM.")
+        self._tp_toggle_btn.setToolTip("Regex rules for token recognition. Short date: Extract date_short_YY or date_short_DM.")
         self._tp_toggle_btn.setStyleSheet("text-align: left; padding: 4px 8px;")
         tp_container_l.addWidget(self._tp_toggle_btn)
         tp_container_l.addWidget(token_patterns_g)
@@ -860,12 +893,11 @@ class DampfGui(QMainWindow):
         self._token_patterns_section_visible = False
         self._syncing_token_patterns = False
         token_patterns_g.hide()
-        results_l.addWidget(tp_container)
 
         # Unrecognized -> Parameters panel
         unrec_g = QGroupBox("Unrecognized \u2192 Parameters")
         unrec_g.setToolTip(
-            "Gray = tokens the scheme does not know. Promote them here: Token → Key. "
+            "Gray = tokens the schema does not know. Promote them here: Token → Key. "
             "Example: SyncK, SyncAA → sync_mode. See docs/Pattern_Library.md for suggestions. No re-crawl."
         )
         unrec_l = QVBoxLayout(unrec_g)
@@ -914,46 +946,30 @@ class DampfGui(QMainWindow):
         self._unrec_g = unrec_g
         self._unrec_section_visible = False
         unrec_g.hide()
-        results_l.addWidget(unrec_container)
 
-        # Outliers (collapsible, collapsed by default)
-        outlier_g = QGroupBox("Outliers")
-        outlier_g.setToolTip(
-            "Paths that deviate from the schema (low recognition) or likely typos in folder names. "
-            "Typo: rare name similar to a frequent one (e.g. MultFiLI -> MultFilI?)."
-        )
-        outlier_l = QVBoxLayout(outlier_g)
-        self.outlier_table = QTableWidget()
-        self.outlier_table.setColumnCount(3)
-        self.outlier_table.setHorizontalHeaderLabels(["Path", "Type", "Detail"])
-        self.outlier_table.setMaximumHeight(120)
-        self.outlier_table.horizontalHeader().setStretchLastSection(True)
-        self.outlier_table.setToolTip("Schema deviation or possible typo. Correct manually or via Unrecognized -> Parameters.")
-        self.outlier_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.outlier_table.customContextMenuRequested.connect(self._outlier_table_context_menu)
-        outlier_l.addWidget(self.outlier_table)
-        outlier_container = QWidget()
-        outlier_container_l = QVBoxLayout(outlier_container)
-        outlier_container_l.setContentsMargins(0, 0, 0, 0)
-        outlier_container_l.setSpacing(0)
-        self._outlier_toggle_btn = QPushButton("Outliers \u25BC", clicked=self._toggle_outlier_section)
-        self._outlier_toggle_btn.setToolTip("Paths with schema deviation or possible typos. Collapsed by default.")
-        self._outlier_toggle_btn.setStyleSheet("text-align: left; padding: 4px 8px;")
-        outlier_container_l.addWidget(self._outlier_toggle_btn)
-        outlier_container_l.addWidget(outlier_g)
-        self._outlier_g = outlier_g
-        self._outlier_section_visible = False
-        self._outlier_relpaths: set = set()
-        outlier_g.hide()
-        results_l.addWidget(outlier_container)
-
-        self.outlier_only_cb = QCheckBox("Outliers only in path overview")
-        self.outlier_only_cb.setToolTip("Show only paths detected as outliers (schema or typo).")
-        self.outlier_only_cb.stateChanged.connect(self._refresh_path_overview)
-        results_l.addWidget(self.outlier_only_cb)
+        # Advanced features (work in progress): Token Patterns + Unrecognized only; hidden by default, foldable
+        advanced_g = QGroupBox("Advanced features (work in progress)")
+        advanced_g.setToolTip("Token Patterns and Unrecognized → Parameters. Functional but still evolving.")
+        advanced_l = QVBoxLayout(advanced_g)
+        advanced_l.setSpacing(4)
+        advanced_l.addWidget(tp_container)
+        advanced_l.addWidget(unrec_container)
+        advanced_container = QWidget()
+        advanced_container_l = QVBoxLayout(advanced_container)
+        advanced_container_l.setContentsMargins(0, 0, 0, 0)
+        advanced_container_l.setSpacing(0)
+        self._advanced_toggle_btn = QPushButton("Advanced features (work in progress) \u25BC", clicked=self._toggle_advanced_section)
+        self._advanced_toggle_btn.setToolTip("Token Patterns and Unrecognized → Parameters. Expand when needed.")
+        self._advanced_toggle_btn.setStyleSheet("text-align: left; padding: 4px 8px;")
+        advanced_container_l.addWidget(self._advanced_toggle_btn)
+        advanced_container_l.addWidget(advanced_g)
+        self._advanced_g = advanced_g
+        self._advanced_section_visible = False
+        advanced_g.hide()
+        results_l.addWidget(advanced_container)
 
         bottom_split.addWidget(results_g)
-        bottom_split.setSizes([280, 320])
+        bottom_split.setSizes([300, 300])  # Detected keys and Results initially similar height
         bottom_split.setStretchFactor(0, 2)
         bottom_split.setStretchFactor(1, 3)
         ms_sizes = settings.get("main_splitter_sizes", "")
@@ -972,6 +988,7 @@ class DampfGui(QMainWindow):
         # Scrollable middle block (4. Keys + 5. Results) for 800x1000 laptop view
         middle_container = QWidget()
         middle_container.setMinimumHeight(650)
+        middle_container.setMinimumWidth(200)  # so scrollbars stay visible when window is narrow
         middle_layout = QVBoxLayout(middle_container)
         middle_layout.setContentsMargins(0, 0, 0, 0)
         middle_layout.addWidget(bottom_split)
@@ -980,11 +997,23 @@ class DampfGui(QMainWindow):
         self._keys_results_scroll.setWidgetResizable(True)
         self._keys_results_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._keys_results_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._keys_results_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._keys_results_scroll.setMinimumWidth(220)  # room for vertical scrollbar + content
         self._keys_results_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
+        # Resizable splitter between Include folders (1-3) and Detected Keys (4-5)
+        self._top_middle_split = QSplitter(Qt.Orientation.Vertical)
+        self._top_middle_split.setChildrenCollapsible(False)
+        # Min height so Root + Crawl + Include-folders (250px) fit; scrollbar and list never overlap buttons
+        top_section.setMinimumHeight(420)
+        self._top_middle_split.addWidget(top_section)
+        self._top_middle_split.addWidget(self._keys_results_scroll)
+        self._top_middle_split.setStretchFactor(0, 0)
+        self._top_middle_split.setStretchFactor(1, 1)
+        self._top_middle_split.setSizes([420, 400])
+
         # Top (1-3) | scrollable middle (4-5) | save+log – fixed 800x1000 target
-        main.addWidget(top_section, 0)
-        main.addWidget(self._keys_results_scroll, 1)
+        main.addWidget(self._top_middle_split, 1)
 
         # 6. Save + Log: one mini bar (buttons + one-line log), no splitter
         save_log_bar = QWidget()
@@ -993,15 +1022,12 @@ class DampfGui(QMainWindow):
         bar_l = QHBoxLayout(save_log_bar)
         bar_l.setContentsMargins(0, 2, 0, 2)
         bar_l.setSpacing(6)
-        load_schema_btn = QPushButton("Load schema from DB", clicked=self._load_schema_from_db)
-        load_schema_btn.setToolTip("Load custom_token_map and other schema from existing DB.")
-        bar_l.addWidget(load_schema_btn)
         save_btn = QPushButton("Save to DB", clicked=self._save_to_db)
         save_btn.setStyleSheet("font-weight: bold; min-width: 100px;")
         save_btn.setToolTip("Write indexed data to SQLite database (path from Output & DB).")
         bar_l.addWidget(save_btn)
         export_btn = QPushButton("Export JSONL/CSV", clicked=self._export_files)
-        export_btn.setToolTip("Export index.jsonl, index.csv, groups.json to Output folder.")
+        export_btn.setToolTip("Export index.jsonl, index.csv to Output folder.")
         bar_l.addWidget(export_btn)
         bar_l.addSpacing(8)
         self.log_widget = QPlainTextEdit()
@@ -1031,9 +1057,11 @@ class DampfGui(QMainWindow):
             p = Path(url.toLocalFile())
             if p.is_dir():
                 self._set_root(str(p.resolve()))
+                QTimer.singleShot(0, self._start_crawl)
                 break
             elif p.parent.is_dir():
                 self._set_root(str(p.parent.resolve()))
+                QTimer.singleShot(0, self._start_crawl)
                 break
 
     def _set_root(self, path: str) -> None:
@@ -1051,6 +1079,7 @@ class DampfGui(QMainWindow):
         content = getattr(self, "_top_section_content", None)
         expand_bar = getattr(self, "_expand_bar", None)
         top_section = getattr(self, "_top_section", None)
+        split = getattr(self, "_top_middle_split", None)
         if not content or not expand_bar:
             return
         visible = not content.isVisible()
@@ -1059,8 +1088,18 @@ class DampfGui(QMainWindow):
         if top_section:
             if visible:
                 top_section.setMaximumHeight(16777215)
+                top_section.setMinimumHeight(420)
+                if split:
+                    total = sum(split.sizes())
+                    saved = getattr(self, "_saved_top_section_height", 420)
+                    split.setSizes([min(saved, max(420, total - 100)), total - min(saved, max(420, total - 100))])
             else:
                 top_section.setMaximumHeight(48)
+                top_section.setMinimumHeight(40)
+                if split:
+                    total = sum(split.sizes())
+                    self._saved_top_section_height = split.sizes()[0]
+                    split.setSizes([48, max(100, total - 48)])
 
     def _toggle_unrec_section(self) -> None:
         """Expand/collapse Unrecognized -> Parameters panel (collapsed by default)."""
@@ -1176,14 +1215,47 @@ class DampfGui(QMainWindow):
                 else f"Token Patterns ({n}) \u25BC"
             )
 
+    def _set_outlier_button_style(self, n: int) -> None:
+        """Green when 0 outliers, default otherwise."""
+        base = "text-align: left; padding: 4px 8px;"
+        if n == 0:
+            self._outlier_toggle_btn.setStyleSheet(base + " color: #0a0; font-weight: bold;")
+        else:
+            self._outlier_toggle_btn.setStyleSheet(base)
+
+    def _toggle_advanced_section(self) -> None:
+        """Expand/collapse Advanced features panel (Token Patterns + Unrecognized). Hidden by default."""
+        self._advanced_section_visible = not getattr(self, "_advanced_section_visible", False)
+        g = getattr(self, "_advanced_g", None)
+        btn = getattr(self, "_advanced_toggle_btn", None)
+        if g:
+            g.setVisible(self._advanced_section_visible)
+        if btn:
+            btn.setText(
+                "Advanced features (work in progress) \u25B2" if self._advanced_section_visible
+                else "Advanced features (work in progress) \u25BC"
+            )
+
     def _toggle_outlier_section(self) -> None:
-        """Expand/collapse Outliers panel (collapsed by default)."""
+        """Expand/collapse Outliers panel (collapsed by default). When expanded, give more space to Results."""
         self._outlier_section_visible = not getattr(self, "_outlier_section_visible", False)
         self._outlier_g.setVisible(self._outlier_section_visible)
-        if self._outlier_section_visible:
-            self._outlier_toggle_btn.setText("Outliers \u25B2")
-        else:
-            self._outlier_toggle_btn.setText("Outliers \u25BC")
+        n = getattr(self, "_outlier_count", 0)
+        tri = "\u25B2" if self._outlier_section_visible else "\u25BC"
+        self._outlier_toggle_btn.setText(f"Outliers: {n} {tri}")
+        self._set_outlier_button_style(n)
+        split = getattr(self, "bottom_split", None)
+        if split and split.count() >= 2:
+            s0, s1 = split.sizes()[0], split.sizes()[1]
+            total = s0 + s1
+            if self._outlier_section_visible:
+                # Shrink Detected keys so Results (and Outliers table) get more space
+                new_s0 = min(s0, 260)
+                split.setSizes([new_s0, total - new_s0])
+            else:
+                # Restore similar height for both panes
+                half = max(200, total // 2)
+                split.setSizes([half, total - half])
 
     def _outlier_table_context_menu(self, pos: object) -> None:
         """Show context menu on outlier table; offer 'Open in Unrecognized'."""
@@ -1288,11 +1360,13 @@ class DampfGui(QMainWindow):
             self.folder_tree_w.resizeColumnToContents(c)
         self._prefix_ext = prefix_ext
         self._prefix_count = prefix_count
-        has_subfolders = any("/" in p for p in all_paths)
-        if has_subfolders:
-            self.folder_tree_g.setTitle("3. Include folders (uncheck to exclude, changes apply immediately)")
-        else:
-            self.folder_tree_g.setTitle("3. Include folders (no subfolders – all files in root)")
+        has_subfolders = len(all_paths) > 1 or any("/" in p for p in all_paths)
+        self.folder_tree_g.setTitle("3. Include folders (uncheck to exclude, changes apply immediately)")
+        if not has_subfolders:
+            info_item = QTreeWidgetItem(["", "", "", "No subfolders, all files in root"])
+            info_item.setFlags(info_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+            info_item.setData(2, Qt.ItemDataRole.UserRole, None)
+            self.folder_tree_w.insertTopLevelItem(0, info_item)
         self.folder_tree_g.show()
         self._folder_tree_ready = False
         self.folder_tree_w.blockSignals(True)
@@ -1462,11 +1536,6 @@ class DampfGui(QMainWindow):
         self._update_effective_rows(self._last_detected_keys)
         self.key_is_used.clear()
         if self._last_detected_keys:
-            config = self._get_config()
-            self.groups = group_rows(self._effective_rows, config["group_keys"])
-            if getattr(self, "group_keys_count_label", None):
-                n = len(self.groups)
-                self.group_keys_count_label.setText(f"  \u2192  {n} groups" if n else "  \u2192  0 groups")
             self._refresh_key_tree(self._last_detected_keys, key_order=getattr(self, "_legend_key_order", None))
             self._update_detected_keys_header()
             root = self.root_edit.text().strip() or None
@@ -1512,75 +1581,11 @@ class DampfGui(QMainWindow):
         if path:
             self.db_edit.setText(path)
 
-    def _debounce_group_keys_update(self) -> None:
-        """Restart timer so group count updates shortly after user stops typing."""
-        t = getattr(self, "_group_keys_debounce", None)
-        if t:
-            t.stop()
-            t.start(400)
-
-    def _on_group_keys_changed(self) -> None:
-        """Recompute groups when user edits Group keys field (editingFinished or debounced textChanged)."""
-        if not getattr(self, "_effective_rows", None):
-            if getattr(self, "group_keys_count_label", None):
-                self.group_keys_count_label.setText("")
-            return
-        config = self._get_config()
-        keys = config["group_keys"]
-        self.groups = group_rows(self._effective_rows, keys)
-        n = len(self.groups)
-        if getattr(self, "group_keys_count_label", None):
-            self.group_keys_count_label.setText(f"  \u2192  {n} groups" if n else "  \u2192  0 groups")
-
-    def _choose_group_keys_from_detected(self) -> None:
-        """Open dialog to pick group keys from detected keys only (no arbitrary strings)."""
-        detected = getattr(self, "_last_detected_keys", None) or []
-        if not detected:
-            QMessageBox.information(
-                self,
-                "Group keys",
-                "No detected keys yet. Run a crawl first, then choose group keys from the list.",
-            )
-            return
-        current = [x.strip() for x in self.group_keys_edit.text().split(",") if x.strip()]
-        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QScrollArea
-        d = QDialog(self)
-        d.setWindowTitle("Choose group keys")
-        d_layout = QVBoxLayout(d)
-        d_layout.addWidget(QLabel("Select keys that define one logical group (only keys present in data):"))
-        d_scroll = QScrollArea()
-        d_scroll.setWidgetResizable(True)
-        d_scroll_w = QWidget()
-        d_scroll_l = QVBoxLayout(d_scroll_w)
-        d_checkboxes = []
-        for k in detected:
-            cb = QCheckBox(k)
-            cb.setChecked(k in current)
-            d_scroll_l.addWidget(cb)
-            d_checkboxes.append((k, cb))
-        d_scroll.setWidget(d_scroll_w)
-        d_layout.addWidget(d_scroll)
-        d_bbox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        d_bbox.accepted.connect(d.accept)
-        d_bbox.rejected.connect(d.reject)
-        d_layout.addWidget(d_bbox)
-        d.setMinimumWidth(320)
-        if d.exec() == QDialog.DialogCode.Accepted:
-            chosen = [k for k, cb in d_checkboxes if cb.isChecked()]
-            if getattr(self, "_group_keys_debounce", None):
-                self._group_keys_debounce.stop()
-            self.group_keys_edit.blockSignals(True)
-            self.group_keys_edit.setText(", ".join(chosen))
-            self.group_keys_edit.blockSignals(False)
-            self._on_group_keys_changed()
-
     def _get_config(self) -> dict:
         self._sync_token_patterns_from_table()
-        gk = [x.strip() for x in self.group_keys_edit.text().split(",") if x.strip()]
         cfg = {
             "allowed_suffixes": DEFAULT_ALLOWED_SUFFIXES,
             "folder_token_depth": self.depth_spin.value(),
-            "group_keys": tuple(gk),
             "recursive": self.recursive_cb.isChecked(),
             "include_hidden": self.include_hidden_cb.isChecked(),
             "parallel_threshold": 999999,  # sequential only (parallel slower on Windows)
@@ -1715,13 +1720,6 @@ class DampfGui(QMainWindow):
         root = self.root_edit.text().strip() or None
         self._legend_key_order = _compute_legend_key_order(self._effective_rows, detected, root)
         self._refresh_key_tree(detected, key_order=self._legend_key_order)
-        suggested = suggest_group_keys_by_category(detected, self.key_categories)
-        self.group_keys_edit.setText(", ".join(suggested))
-        config = self._get_config()
-        self.groups = group_rows(self._effective_rows, config["group_keys"])
-        if getattr(self, "group_keys_count_label", None):
-            n = len(self.groups)
-            self.group_keys_count_label.setText(f"  \u2192  {n} groups" if n else "  \u2192  0 groups")
         self._refresh_path_overview()
         self._refresh_unrecognized_panel()
         self._refresh_outlier_panel()
@@ -1752,10 +1750,10 @@ class DampfGui(QMainWindow):
             self.outlier_table.setItem(i, 1, QTableWidgetItem(art))
             self.outlier_table.setItem(i, 2, QTableWidgetItem(detail))
         n = len(table_rows)
-        self._outlier_toggle_btn.setText(
-            f"Outliers ({n}) \u25BC" if not getattr(self, "_outlier_section_visible", False)
-            else f"Outliers ({n}) \u25B2"
-        )
+        self._outlier_count = n
+        tri = "\u25B2" if getattr(self, "_outlier_section_visible", False) else "\u25BC"
+        self._outlier_toggle_btn.setText(f"Outliers: {n} {tri}")
+        self._set_outlier_button_style(n)
 
     def _refresh_key_tree(self, detected_keys: list, key_order: list | None = None) -> None:
         self.key_tree.blockSignals(True)
@@ -1794,57 +1792,65 @@ class DampfGui(QMainWindow):
                 return f"{x:.2g}"
             return str(int(x))
 
-        for cat_label, pairs in build_key_tree(detected_keys, self.key_categories, self.key_display_names, key_order):
-            cat_item = QTreeWidgetItem([""] * 11)
-            cat_item.setFlags(cat_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-            self.key_tree.addTopLevelItem(cat_item)
-            for key, display_name in pairs:
-                s = stats.get(key, {})
-                u = s.get("uniques", 0)
-                mn, mx, mean = s.get("min"), s.get("max"), s.get("mean")
-                min_str = _fmt_num(mn)
-                max_str = _fmt_num(mx)
-                mean_str = _fmt_num(mean)
-                full_count = per_key.get(key, 0)
-                missing = total - full_count
-                if missing == 0:
-                    full_str = str(total)
-                else:
-                    full_str = f"{full_count} (−{missing})"
-                uniq_str = str(u)
-                default_used = u > 1
-                is_used = self.key_is_used.get(key, default_used)
-                is_cat = self.key_is_categorical.get(key, u < 10)
-                si_exp = self.key_si_scale.get(key)
-                has_unit = get_unit_info(key) is not None
-                base = SI_BASE_UNIT.get(key, "")
-                raw_u = raw_units.get(key, "")
-                if si_exp is not None and has_unit:
-                    unit_text = exponent_to_unit(base, si_exp)
-                elif has_unit and raw_u:
-                    unit_text = raw_u
-                else:
-                    unit_text = "-"
-                exp_to_show = si_exp if si_exp is not None else (unit_to_exponent(raw_u) if raw_u and has_unit else None)
-                si_text = str(exp_to_show) if exp_to_show is not None else ""
-                child = QTreeWidgetItem(cat_item, ["", "", uniq_str, full_str, display_name, key, si_text, unit_text, min_str, max_str, mean_str])
-                child.setData(5, Qt.ItemDataRole.UserRole, key)
-                child.setData(6, Qt.ItemDataRole.UserRole, has_unit)
-                child.setData(7, Qt.ItemDataRole.UserRole, raw_u)
-                child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
-                child.setCheckState(0, Qt.CheckState.Checked if is_used else Qt.CheckState.Unchecked)
-                child.setCheckState(1, Qt.CheckState.Checked if is_cat else Qt.CheckState.Unchecked)
-                bg = key_to_color.get(key)
-                if bg:
-                    child.setBackground(5, QBrush(QColor(bg)))
-            cat_item.setExpanded(True)
+        # Flat list: one row per key (no category tree). Order by key_order.
+        tree_result = build_key_tree(detected_keys, self.key_categories, self.key_display_names, key_order)
+        order_idx = {k: i for i, k in enumerate(key_order)}
+        all_pairs = [(k, d) for _cat, pairs in tree_result for k, d in pairs]
+        all_pairs.sort(key=lambda x: (order_idx.get(x[0], 9999), x[0]))
+        for key, display_name in all_pairs:
+            s = stats.get(key, {})
+            u = s.get("uniques", 0)
+            mn, mx, mean = s.get("min"), s.get("max"), s.get("mean")
+            min_str = _fmt_num(mn)
+            max_str = _fmt_num(mx)
+            mean_str = _fmt_num(mean)
+            full_count = per_key.get(key, 0)
+            missing = total - full_count
+            if missing == 0:
+                full_str = str(total)
+            else:
+                full_str = f"{full_count} (−{missing})"
+            uniq_str = str(u)
+            default_used = u > 1
+            is_used = self.key_is_used.get(key, default_used)
+            is_cat = self.key_is_categorical.get(key, u < 10)
+            si_exp = self.key_si_scale.get(key)
+            has_unit = get_unit_info(key) is not None
+            base = SI_BASE_UNIT.get(key, "")
+            raw_u = raw_units.get(key, "")
+            if si_exp is not None and has_unit:
+                unit_text = exponent_to_unit(base, si_exp)
+            elif has_unit and raw_u:
+                unit_text = raw_u
+            else:
+                unit_text = "-"
+            exp_to_show = si_exp if si_exp is not None else (unit_to_exponent(raw_u) if raw_u and has_unit else None)
+            si_text = str(exp_to_show) if exp_to_show is not None else ""
+            group_label = self.key_group_label.get(key, "")
+            item = QTreeWidgetItem(["", "", uniq_str, full_str, display_name, key, si_text, unit_text, min_str, max_str, mean_str, ""])
+            item.setData(5, Qt.ItemDataRole.UserRole, key)
+            item.setData(6, Qt.ItemDataRole.UserRole, has_unit)
+            item.setData(7, Qt.ItemDataRole.UserRole, raw_u)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
+            item.setCheckState(0, Qt.CheckState.Checked if is_used else Qt.CheckState.Unchecked)
+            item.setCheckState(1, Qt.CheckState.Checked if is_cat else Qt.CheckState.Unchecked)
+            bg = key_to_color.get(key)
+            if bg:
+                item.setBackground(5, QBrush(QColor(bg)))
+            self.key_tree.addTopLevelItem(item)
+            combo = QComboBox()
+            combo.setEditable(True)
+            combo.addItems(list(self.key_group_choices))
+            combo.setCurrentText(group_label)
+            combo.lineEdit().setPlaceholderText("optional")
+            combo.currentTextChanged.connect(lambda t, k=key: self._on_group_combo_changed(k, t))
+            combo.lineEdit().editingFinished.connect(lambda k=key, c=combo: self._on_group_editing_finished(k, c))
+            self.key_tree.setItemWidget(item, 11, combo)
         self.key_tree.blockSignals(False)
         for c in range(self.key_tree.columnCount()):
             self.key_tree.resizeColumnToContents(c)
 
     def _on_key_tree_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
-        if item.childCount() > 0:
-            return
         key = item.data(5, Qt.ItemDataRole.UserRole)
         if not key:
             return
@@ -1874,18 +1880,33 @@ class DampfGui(QMainWindow):
                 except ValueError:
                     pass
 
+    def _on_group_combo_changed(self, key: str, text: str) -> None:
+        """Update key group label only (no add to choices here; that happens on editingFinished)."""
+        self.key_group_label[key] = text.strip()
+
+    def _on_group_editing_finished(self, key: str, combo: QComboBox) -> None:
+        """When user finishes editing the Group field: add final value to choices if new, and to all combos."""
+        t = combo.currentText().strip()
+        self.key_group_label[key] = t
+        if t and t not in self.key_group_choices:
+            self.key_group_choices.append(t)
+            for i in range(self.key_tree.topLevelItemCount()):
+                it = self.key_tree.topLevelItem(i)
+                w = self.key_tree.itemWidget(it, 11)
+                if isinstance(w, QComboBox) and w.findText(t) == -1:
+                    w.addItem(t)
+
     def _on_tree_select(self) -> None:
         items = self.key_tree.selectedItems()
         if not items:
             self._refresh_key_samples_label(None)
             return
         item = items[0]
-        if item.childCount() > 0:
-            self._refresh_key_samples_label(None)
-            return
         key = item.data(5, Qt.ItemDataRole.UserRole)
         if key:
             self._refresh_key_samples_label(key)
+        else:
+            self._refresh_key_samples_label(None)
 
     def _refresh_key_samples_label(self, key: str | None) -> None:
         """Show sample values for selected key. Called on tree selection or path refresh."""
@@ -1935,12 +1956,10 @@ class DampfGui(QMainWindow):
         """Return list of keys that are checked in Used column, or None for all."""
         out: list = []
         for i in range(self.key_tree.topLevelItemCount()):
-            cat = self.key_tree.topLevelItem(i)
-            for j in range(cat.childCount()):
-                child = cat.child(j)
-                key = child.data(5, Qt.ItemDataRole.UserRole)
-                if key and child.checkState(0) == Qt.CheckState.Checked:
-                    out.append(key)
+            item = self.key_tree.topLevelItem(i)
+            key = item.data(5, Qt.ItemDataRole.UserRole)
+            if key and item.checkState(0) == Qt.CheckState.Checked:
+                out.append(key)
         return out if out else None
 
     def _refresh_unrecognized_panel(self) -> None:
@@ -2168,8 +2187,7 @@ class DampfGui(QMainWindow):
         tree = getattr(self, "key_tree", None)
         if tree and tree.selectedItems():
             it = tree.selectedItems()[0]
-            if it.childCount() == 0:
-                sel_key = it.data(5, Qt.ItemDataRole.UserRole)
+            sel_key = it.data(5, Qt.ItemDataRole.UserRole)
         if sel_key:
             self._refresh_key_samples_label(sel_key)
 
@@ -2189,6 +2207,16 @@ class DampfGui(QMainWindow):
         if isinstance(schema.get("key_categories"), dict):
             self.key_categories = dict(schema["key_categories"])
             loaded.append("categories")
+        if isinstance(schema.get("key_group_label"), dict):
+            self.key_group_label = dict(schema["key_group_label"])
+            loaded.append("group labels")
+        if isinstance(schema.get("key_group_choices"), list):
+            base = list(DEFAULT_GROUP_CHOICES)
+            extra = [x for x in schema["key_group_choices"] if x and x not in base]
+            self.key_group_choices = base + extra
+        for v in self.key_group_label.values():
+            if v and v not in self.key_group_choices:
+                self.key_group_choices.append(v)
         ctm = schema.get("custom_token_map")
         if isinstance(ctm, dict):
             for tok, key in list(self.custom_token_map.items()):
@@ -2236,7 +2264,6 @@ class DampfGui(QMainWindow):
             db_path = str(root_path / "dampf.db")
             self.db_edit.setText(db_path)
         config = self._get_config()
-        groups = group_rows(self._effective_rows, config["group_keys"])
         used_keys = self._get_used_keys()
         column_si_scale = {k: v for k, v in (getattr(self, "key_si_scale", {}) or {}).items() if v is not None}
         # output_dir must be under root; else use root/_index and fix GUI
@@ -2264,16 +2291,18 @@ class DampfGui(QMainWindow):
         schema = {"root_dir": self.root_edit.text(), "output_dir": output_dir, "db_path": db_path,
                   "table_name": (self.current_config or {}).get("table_name") or "data",
                   "relative_filepath_column": (self.current_config or {}).get("relative_filepath_column") or "relpath",
-                  "group_keys": list(config["group_keys"]), "folder_token_depth": config["folder_token_depth"],
+                  "folder_token_depth": config["folder_token_depth"],
                   "recursive": config["recursive"], "include_hidden": config["include_hidden"],
                   "column_si_scale": column_si_scale,
                   "key_display_names": key_display_names_export, "key_categories": self.key_categories,
+                  "key_group_label": dict(self.key_group_label),
+                  "key_group_choices": list(self.key_group_choices),
                   "key_is_categorical": dict(self.key_is_categorical), "key_is_used": dict(self.key_is_used),
                   "custom_token_map": dict(self.custom_token_map),
                   "token_patterns": list(getattr(self, "token_patterns", []) or [])}
         try:
             t0 = time.perf_counter()
-            write_index_to_sqlite(self._effective_rows, groups, db_path, schema_config=schema, used_keys=used_keys)
+            write_index_to_sqlite(self._effective_rows, {}, db_path, schema_config=schema, used_keys=used_keys)
             dt = time.perf_counter() - t0
             self.log_widget.appendPlainText(f"[save_db] {dt:.3f}s | {len(self._effective_rows)} rows -> {db_path}")
             QMessageBox.information(self, "DB", f"Saved: {db_path}")
@@ -2296,9 +2325,6 @@ class DampfGui(QMainWindow):
             meta = build_column_metadata(self._effective_rows, used_keys, column_si_scale)
             if meta:
                 write_index_meta(meta, out_path / "index_meta.json")
-            config = self._get_config()
-            groups_export = group_rows(self._effective_rows, config["group_keys"])
-            (out_path / "groups.json").write_text(json.dumps(groups_export, ensure_ascii=False, indent=2))
             dt = time.perf_counter() - t0
             self.log_widget.appendPlainText(f"[export] {dt:.3f}s | {len(self._effective_rows)} rows -> {out_path}")
             QMessageBox.information(self, "Export", f"Exported to:\n{out_path}")
@@ -2322,6 +2348,7 @@ class DampfGui(QMainWindow):
             splitter_sizes=splitter_sizes,
             main_splitter_sizes=main_splitter_sizes,
             outer_splitter_sizes=outer_splitter_sizes,
+            group_choices=[c for c in getattr(self, "key_group_choices", []) if c and c not in DEFAULT_GROUP_CHOICES],
         )
         event.accept()
 

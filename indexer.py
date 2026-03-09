@@ -398,7 +398,7 @@ def parse_tokens(
             val = parse_number(m.group("val"))
             unit = m.group("unit").replace("µ", "u")
             if val is not None:
-                # Val in gecrawlter Einheit (500 bei "500us"); unit fuer Rueckfuehrbarkeit
+                # Val in crawled unit (500 for "500us"); unit for traceability
                 set_field("exposure", {"val": val, "unit": unit}, "exposure", tok)
             continue
         m = RE_TEMP.match(tok)
@@ -532,21 +532,6 @@ def iter_files(
     return out
 
 
-def _fmt_group_val(v: Any) -> str:
-    """Format Wert fuer Gruppen-Key; val+unit Dict -> '500 us'."""
-    if is_quantitative_val(v):
-        return format_val_unit(v)
-    return str(v) if v is not None else ""
-
-
-def group_rows(rows: List[Dict[str, Any]], keys: Tuple[str, ...]) -> Dict[str, List[str]]:
-    groups: Dict[str, List[str]] = {}
-    for r in rows:
-        gk = " | ".join(f"{k}={_fmt_group_val(r.get(k))}" for k in keys)
-        groups.setdefault(gk, []).append(r["path"])
-    return groups
-
-
 def apply_majority_frame_logic(rows: List[Dict[str, Any]]) -> None:
     """
     In-place: if most rows have the last numeric token in the filename assigned to key K
@@ -598,17 +583,14 @@ def apply_majority_frame_logic(rows: List[Dict[str, Any]]) -> None:
 # Keys we never suggest for grouping (internal/metadata)
 _ROW_META_KEYS = {"path", "relpath", "ext", "stem", "tokens", "trace", "recognized", "total_tokens", "confidence", "_duplicate_keys", "_folder_tokens", "_file_tokens", "_folder_token_to_key", "_file_token_to_key", "_token_original"}
 
-# Preferred order for group keys when they appear in data
-_PREFERRED_GROUP_ORDER = ("date", "experiment", "sample", "run", "rep", "trial", "exposure", "modality", "camera", "channel")
-
 
 def suggest_nomenclature(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    From indexed rows, derive detected fields and suggested GROUP_KEYS.
-    Returns {"detected_fields": [...], "suggested_group_keys": [...]}.
+    From indexed rows, derive detected fields.
+    Returns {"detected_fields": [...]}.
     """
     if not rows:
-        return {"detected_fields": [], "suggested_group_keys": list(_PREFERRED_GROUP_ORDER)[:5]}
+        return {"detected_fields": []}
 
     all_keys: Dict[str, int] = {}
     for r in rows:
@@ -618,14 +600,7 @@ def suggest_nomenclature(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             all_keys[k] = all_keys.get(k, 0) + 1
 
     detected_fields = sorted(all_keys.keys(), key=lambda x: (-all_keys[x], x))
-
-    from key_lut import _normalize_key
-    suggested = [k for k in _PREFERRED_GROUP_ORDER if k in all_keys]
-    for k in detected_fields:
-        if k not in suggested:
-            suggested.append(k)
-    suggested = list(dict.fromkeys(_normalize_key(k) for k in suggested))
-    return {"detected_fields": detected_fields, "suggested_group_keys": suggested}
+    return {"detected_fields": detected_fields}
 
 
 def suggest_categorical_keys(
@@ -714,12 +689,12 @@ def run_indexer(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
     """
     Run full index pipeline. Config can override:
-    allowed_suffixes (set or list), folder_token_depth (int), group_keys (tuple or list),
+    allowed_suffixes (set or list), folder_token_depth (int),
     recursive (bool), include_hidden (bool), stopwords (set or list), modality_map (dict),
     parallel_threshold (int, default 100: min files to use multicore),
     parallel_max_workers (int, default cpu_count-1),
     log_callback (callable[str] for timing/log messages).
-    Returns (rows, groups).
+    Returns (rows, {}). Second value is empty dict for backward compatibility.
     """
     cfg = config or {}
     root = Path(root_dir).expanduser().resolve()
@@ -735,21 +710,6 @@ def run_indexer(
     include_hidden = cfg.get("include_hidden", False)
 
     folder_depth = cfg.get("folder_token_depth", 99)
-    group_keys = cfg.get("group_keys")
-    if group_keys is not None and not isinstance(group_keys, tuple):
-        group_keys = tuple(group_keys) if group_keys else ("date", "experiment", "sample", "run", "rep")
-    else:
-        group_keys = group_keys or ("date", "experiment", "sample", "run", "rep")
-    # Legacy: exposure_s/exposure_us -> exposure; deduplizieren
-    from key_lut import _normalize_key
-    seen: set[str] = set()
-    normalized: list[str] = []
-    for k in group_keys:
-        nk = _normalize_key(k)
-        if nk not in seen:
-            seen.add(nk)
-            normalized.append(nk)
-    group_keys = tuple(normalized)
 
     stopwords = cfg.get("stopwords")
     if stopwords is not None and not isinstance(stopwords, set):
@@ -800,12 +760,8 @@ def run_indexer(
 
     apply_majority_frame_logic(rows)
 
-    t4 = time.perf_counter()
-    groups = group_rows(rows, group_keys)
-    t5 = time.perf_counter()
-    _log(f"[{t5 - t0:.3f}s] group_rows: {t5 - t4:.3f}s, {len(groups)} groups")
-    _log(f"[{t5 - t0:.3f}s] total")
-    return rows, groups
+    _log(f"[{time.perf_counter() - t0:.3f}s] total")
+    return rows, {}
 
 
 def write_jsonl(
@@ -814,7 +770,7 @@ def write_jsonl(
     used_keys: List[str] | None = None,
     column_si_scale: Dict[str, int] | None = None,
 ) -> None:
-    """Export JSONL: numerische Werte; bei column_si_scale.get(k)==0 Konvertierung zu SI."""
+    """Export JSONL: numeric values; when column_si_scale.get(k)==0 convert to SI."""
     from key_lut import get_export_value_and_metadata
     keep = set(used_keys) | {"path", "relpath"} if used_keys else None
     with out_path.open("w", encoding="utf-8") as f:
@@ -830,7 +786,7 @@ def write_csv(
     used_keys: List[str] | None = None,
     column_si_scale: Dict[str, int] | None = None,
 ) -> None:
-    """Export CSV: numerische Werte; bei column_si_scale.get(k)==0 Konvertierung zu SI."""
+    """Export CSV: numeric values; when column_si_scale.get(k)==0 convert to SI."""
     from key_lut import get_export_value_and_metadata
     keep = set(used_keys) | {"path", "relpath"} if used_keys else None
     flat_rows: List[Dict[str, Any]] = []
@@ -858,7 +814,7 @@ def build_column_metadata(
     keys: List[str] | None = None,
     column_si_scale: Dict[str, int] | None = None,
 ) -> Dict[str, Dict[str, str]]:
-    """Column -> {unit, raw_unit}. Bei si_scale=0: unit=SI-Basis, raw_unit=Original."""
+    """Column -> {unit, raw_unit}. When si_scale=0: unit=SI base, raw_unit=original."""
     from key_lut import SI_BASE_UNIT, get_export_value_and_metadata
     out: Dict[str, Dict[str, str]] = {}
     key_set: set[str] | None = set(keys) if keys else None
@@ -885,5 +841,5 @@ def build_column_metadata(
 
 
 def write_index_meta(meta: Dict[str, Dict[str, str]], out_path: Path) -> None:
-    """Schreibt column_metadata als index_meta.json (unit, raw_unit pro Spalte)."""
+    """Write column_metadata as index_meta.json (unit, raw_unit per column)."""
     out_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))

@@ -1,45 +1,34 @@
-# Group Keys – Referenz
+# Group Keys – Entfernt
 
-Group Keys sind in der GUI **ausgeblendet** (nur fuer Export/DB relevant). Diese Referenz erklaert, was sie sind und wo sie verwendet werden.
-
----
-
-## Was sind Group Keys?
-
-- **Keine Auswirkung auf:** Erkennung von Parametern, Key-Tree, Pfaduebersicht oder pro-Datei-Ergebnisse in DAMPF.
-- **Nur relevant fuer:** Wie Dateien zu **logischen Gruppen** zusammengefasst werden – und das nur bei **Export** und **Save to DB**.
-
-**Definition:** Eine **Gruppe** = alle Dateien, die dieselbe Kombination von Werten fuer die gewaehlten Keys haben.  
-Beispiel: Group Keys = `date`, `run` → Gruppe `date=2022-01-19 | run=1` = alle Dateien mit diesem Datum und dieser Run-Nummer.
+Die **Group-Keys-Funktionalitaet** wurde aus DAMPF entfernt.
 
 ---
 
-## Wo werden sie verwendet?
+## Was wurde entfernt?
 
-| Aktion | Verwendung |
-|--------|------------|
-| **Export** | `groups.json` listet pro Gruppen-Label die zugehoerigen Dateipfade. Downstream-Tools koennen so "alle Dateien einer Gruppe" laden. |
-| **Save to DB** | Das Schema speichert `group_keys`; WOLKE/BLITZ (oder andere Consumer) wissen, wie eine logische Einheit (z.B. ein Messlauf) definiert ist. |
-| **Crawl** | `run_indexer` erhaelt `group_keys` und liefert ein Gruppen-Dict; die GUI nutzt intern dasselbe fuer Anzeige/Export. |
-
----
-
-## Default
-
-Ohne sichtbare Group-Keys-UI verwendet DAMPF intern:
-
-- **Default:** `date`, `experiment`, `sample`, `run`, `rep`
-
-Dieser Default wird beim Crawl, beim Save to DB und beim Export verwendet, wenn die Gruppe-Keys-Zeile ausgeblendet ist.
+- **Export:** Es wird kein `groups.json` mehr erzeugt.
+- **Save to DB:** In der config-Tabelle wird `group_keys` nicht mehr gespeichert.
+- **GUI:** Keine Group-Keys-Zeile, kein "Choose…", keine Gruppenanzahl.
+- **Config/Schema:** `group_keys` gibt es weder in project.ini/project.json noch in der Indexer-Config.
+- **API:** `run_indexer()` liefert weiterhin `(rows, {})`; das zweite Element ist ein leeres Dict zur Abwaertskompatibilitaet.
 
 ---
 
-## Group-Keys-UI wieder einblenden
+## Hintergrund
 
-Falls du Group Keys aendern musst (z.B. andere Keys fuer groups.json oder DB):
-
-- In **gui.py** die Zeile `self._group_keys_container.hide()` auskommentieren oder durch `self._group_keys_container.setVisible(True)` ersetzen, damit die Zeile mit Label, Eingabefeld, Button "Choose…" und "→ N groups" wieder erscheint.
+- **WOLKE** nutzt weder `groups.json` noch die DB-config/`group_keys`; WOLKE liest nur die eine Daten-Tabelle und filtert ueber deren Spalten (z.B. `date`, `run`) als normale Kategorien.
+- Die Begriffe "Gruppe" und "Group Keys" haben in der GUI Verwirrung gestiftet (z.B. in Verbindung mit der "Used"-Spalte). Mit der Entfernung entfaellt diese Mehrdeutigkeit.
+- Sollte in Zukunft wieder eine gruppenbasierte Auswertung noetig sein, kann sie ueber die vorhandenen Spalten in der data-Tabelle bzw. im Export abgebildet werden.
 
 ---
 
-*Siehe auch: TODO.md / Anbindung Wolke/Blitz; db_writer.py (Schema config).*
+## Detected keys: flache Liste + Spalte "Group"
+
+- **Kein Kategorie-Baum mehr:** Die Keys werden als flache Liste angezeigt (eine Zeile pro Key), sortiert nach Pfadposition. Keine vorgegebenen LUT-Kategorien (Parameter, Gas, Frequency etc.).
+- **Spalte "Group (optional)":** Auswahl aus Vorgaben oder eigenes Label. Vorgaben per Default: Camera, Run, Source, Experiment, Modality (definiert in **gui.py** als `DEFAULT_GROUP_CHOICES`). Weitere Gruppen legt der Nutzer per Eingabe an; sie stehen sofort in allen Zeilen zur Verfuegung.
+- **Persistenz:** Nutzer-definierte Gruppen werden in **dampf.ini** unter `[groups]` → `group_choices` gespeichert (beim Schliessen der GUI). Zusaetzlich beim "Save to DB" / "Load schema from DB" in der DB-config.
+- **Vorteil:** Flexibel gruppierbar (z.B. voltage + frequency = Source; frequency + exposure = Camera), ohne feste LUT-Vorgaben.
+
+---
+
+*Stand: Nach Abschluss der Gruppen-Entfernung. Siehe auch: README.MD (Output ohne groups.json).*
