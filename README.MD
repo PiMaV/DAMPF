@@ -214,3 +214,10 @@ The baseline is intentionally deterministic.
 * Optional: ML fallback for unknown tokens
 
 ---
+
+## About
+
+Developed and maintained by  
+[M.E.S.S. — Mattern Engineering & Software Solutions](https://mess.engineering)
+
+Parts of this work were influenced by prior research activities in an academic context, including work at [INP Greifswald](https://www.inp-greifswald.de).

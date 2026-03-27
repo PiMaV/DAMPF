@@ -1,5 +1,4 @@
-# DAMPF TODO
-
+links in GUI ? auf mess und wetter?
 
 
 
