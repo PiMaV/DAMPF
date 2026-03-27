@@ -21,7 +21,7 @@ from indexer import (
     write_index_meta,
     write_jsonl,
 )
-from db_writer import write_index_to_sqlite, load_schema_from_db
+from db_writer import default_db_path_for_root, write_index_to_sqlite, load_schema_from_db
 from outlier_detection import detect_schema_outliers, detect_typo_candidates
 from key_lut import (
     build_key_tree,
@@ -612,7 +612,7 @@ class DampfGui(QMainWindow):
         adv_l.addWidget(QLabel("Database:"), 1, 0)
         self.db_edit = QLineEdit()
         self.db_edit.setText(self.db_path)
-        self.db_edit.setToolTip("SQLite database file path. Default: root/dampf.db")
+        self.db_edit.setToolTip("SQLite database file path. Default: root/<root_folder_name>.db")
         adv_l.addWidget(self.db_edit, 1, 1)
         browse_db_btn = QPushButton("Browse", clicked=self._browse_db)
         browse_db_btn.setToolTip("Choose where to save the SQLite database.")
@@ -1069,7 +1069,7 @@ class DampfGui(QMainWindow):
         if not self.output_edit.text().strip():
             self.output_edit.setText(str(Path(path) / "_index"))
         if not self.db_edit.text().strip():
-            self.db_edit.setText(str(Path(path) / "dampf.db"))
+            self.db_edit.setText(str(default_db_path_for_root(path)))
 
     def _toggle_advanced(self, on: bool) -> None:
         self.advanced_w.setVisible(on)
@@ -2256,12 +2256,12 @@ class DampfGui(QMainWindow):
             QMessageBox.warning(self, "No root", "Set root folder first.")
             return
         root_path = Path(root).resolve()
-        db_path = self.db_edit.text().strip() or str(root_path / "dampf.db")
+        db_path = self.db_edit.text().strip() or str(default_db_path_for_root(root_path))
         db_path_resolved = Path(db_path).resolve()
         try:
             db_path_resolved.relative_to(root_path)
         except ValueError:
-            db_path = str(root_path / "dampf.db")
+            db_path = str(default_db_path_for_root(root_path))
             self.db_edit.setText(db_path)
         config = self._get_config()
         used_keys = self._get_used_keys()

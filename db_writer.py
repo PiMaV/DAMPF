@@ -10,6 +10,35 @@ from typing import Any, Dict, List, Optional
 
 from key_lut import get_display_value, get_export_value_and_metadata, is_quantitative_val
 
+_INVALID_DB_FILENAME_CHARS = frozenset('<>:"/\\|?*\n\r\t\x00')
+_WIN_RESERVED_STEMS = frozenset(
+    {
+        "CON", "PRN", "AUX", "NUL", "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    }
+)
+
+
+def default_db_path_for_root(root_dir: str | Path) -> Path:
+    """
+    Default SQLite path: <root>/<folder_name>.db inside the crawl root.
+    Folder name is sanitized (invalid filename characters removed). Fallback stem 'dampf' if empty.
+    Windows reserved device names get suffix '_dataset' before '.db'.
+    """
+    root = Path(root_dir).expanduser().resolve()
+    raw = root.name.strip()
+    if not raw or raw in (".", ".."):
+        stem = "dampf"
+    else:
+        stem = "".join(c for c in raw if c not in _INVALID_DB_FILENAME_CHARS).strip() or "dampf"
+    up = stem.upper()
+    if up in _WIN_RESERVED_STEMS or (len(stem) == 4 and stem[:3].upper() in ("COM", "LPT") and stem[3].isdigit()):
+        stem = stem + "_dataset"
+    if stem.lower().endswith(".db"):
+        return root / stem
+    return root / f"{stem}.db"
+
+
 # Keys that do not become data columns in the contract table (metadata/internal only)
 ROW_META_KEYS = {
     "path", "relpath", "ext", "stem", "tokens", "trace", "recognized",

@@ -1,37 +1,52 @@
 # DAMPF — Data Aggregation & Modular Processing Framework
 
-![DAMPF GUI](docs/Screenshot_GUI_Example.png)
-
-**DAMPF is the data ingestion and indexing component of the WETTER framework.**
-
-It scans experimental data folders, extracts semantic information from file and folder names, and converts unstructured measurement archives into a structured, queryable dataset.
-
-Instead of manually organizing large experiment folders, DAMPF automatically interprets naming conventions and builds a machine-readable index that can be used by other tools in the WETTER ecosystem.
-
-*Filename semantic indexer*: structures measurement data by folder and file names.
-
 ## WETTER Framework
 
-This project is part of the **WETTER framework**, a modular architecture for structured processing and exploration of experimental imaging datasets.
+[![Landing Page](https://img.shields.io/badge/WETTER-Landing_Page-0a0f14?style=flat-square)](https://wetter.mess.engineering)
+[![DAMPF](https://img.shields.io/badge/DAMPF-Indexing-00fff2?style=flat-square)](https://github.com/PiMaV/DAMPF)
+[![KEIM](https://img.shields.io/badge/KEIM-Inference-9ccc65?style=flat-square)](https://github.com/PiMaV/KEIM)
+[![WOLKE](https://img.shields.io/badge/WOLKE-Web_Explorer-lightgrey?style=flat-square)](https://github.com/PiMaV/WOLKE)
+[![BLITZ](https://img.shields.io/badge/BLITZ-Image_Explorer-ff5a4f?style=flat-square)](https://github.com/PiMaV/BLITZ)
 
-Typical workflow:
+This project is part of the **WETTER framework**, a modular toolkit for structured processing, analysis, and exploration of scientific imaging datasets.
 
-**Raw Data → DAMPF → KEIM → WOLKE → BLITZ**
+**Pipeline:** `Raw Data → DAMPF → KEIM → WOLKE → BLITZ`
 
-Each component handles a specific stage in the data pipeline:
+At its core, WETTER operates on a **structured SQLite dataset**:  
+DAMPF converts raw file-based archives into a queryable database, which is then extended (KEIM), explored (WOLKE), and visualized (BLITZ).
 
-- **DAMPF** — semantic indexing of measurement datasets based on file and folder names  
-- **KEIM** — statistical extraction and dataset analysis  
-- **WOLKE** — web-based exploration of indexed datasets  
-- **BLITZ** — high-performance interactive image exploration
+The central entry point, ecosystem overview, and module navigation are available here:  
+**[wetter.mess.engineering](https://wetter.mess.engineering)**
 
-A broader overview of the ecosystem and links to all modules can be found at:
+### Modules at a glance
 
-**https://wetter.mess.engineering**
+- **DAMPF — Data Aggregation & Modular Processing Framework**  
+  Semantic indexing of file and folder structures into a structured SQLite dataset (primary data source).
 
-Architecture background and early design concepts were presented at the DPG Symposium:
+- **KEIM — Knowledge Extraction & Inference Module**  
+  Scalar statistics, feature extraction, and analytical evaluation on top of the indexed dataset.
 
-📄 https://wetter.mess.engineering/docs/BLITZ_WOLKE_DPG25V2_Compact.pdf
+- **WOLKE — Web-Oriented Layout for Knowledge Exploration**  
+  Browser-based exploration of structured metadata with filtering, selection, and dataset navigation.
+
+- **BLITZ — Bulk Loading and Interactive Time series Zonal analysis**  
+  High-performance interactive visualization and analysis of selected data.
+
+---
+
+## What is DAMPF
+
+> **DAMPF is the entry point of the WETTER pipeline.**  
+> It performs semantic indexing of file and folder structures and produces a **SQLite database** as its primary output: one row per file, typed columns, and supporting tables (`column_metadata`, optional `config`).
+> This turns raw archives into **structured metadata that can be queried, filtered, and used programmatically** (WOLKE, BLITZ, scripts).
+
+DAMPF scans experimental folders, extracts semantics from paths and filenames, and **writes that database** (GUI: **Save to DB**).
+
+**Optional ASCII exports** in `root/_index/` (`index.jsonl`, `index.csv`, optional `index_meta.json`) are for quick human read, Excel, or diffs. They are not the primary handoff for the WETTER pipeline.
+
+*File- and folder-based semantic indexing engine*: This pipeline transforms loosely organized experiment folders into a structured dataset that can be queried, filtered, and analyzed programmatically.
+
+![DAMPF GUI](docs/Screenshot_GUI_Example.png)
 
 ---
 
@@ -39,11 +54,11 @@ Architecture background and early design concepts were presented at the DPG Symp
 
 DAMPF automatically structures large collections of measurement files based on folder and file naming conventions.
 
-Semantic information such as date, run number, temperature, exposure time, camera ID, sample name, or modality is extracted from paths and filenames and mapped into a uniform machine-readable schema.
+Semantic information such as date, run number, temperature, exposure time, camera ID, sample name, or modality is extracted from paths and filenames and mapped into a uniform schema.
 
-The resulting dataset can then be explored and analyzed by other tools in the WETTER ecosystem.
+The resulting dataset can be explored and analyzed by other tools in the WETTER ecosystem.
 
-Typical use cases:
+**Typical use cases:**
 - Scientific image data (PNG, TIFF, JPG)
 - NumPy arrays (NPY, NPZ)
 - CSV/text measurement data
@@ -53,8 +68,6 @@ Typical use cases:
 ---
 
 ## Indexing Pipeline
-
-Pipeline:
 
 1. **Folder scan**
    - Recursive
@@ -76,90 +89,126 @@ Pipeline:
    - Processing tags (raw, dark, flat, avg, ...)
 
 4. **Structured schema**
-   Each file is stored as a dict, e.g.:
 
-   {
-     "date": "2026-02-28",
-     "run": 3,
-     "temp": {"val": 20.0, "unit": "c"},
-     "exposure": {"val": 2.0, "unit": "us"},
-     "camera": 1,
-     "modality": "ir",
-     "processing": ["raw"],
-     "path": "...",
-     "confidence": 0.93
-   }
+```json
+{
+  "date": "2026-02-28",
+  "run": 3,
+  "temp": {"val": 20.0, "unit": "c"},
+  "exposure": {"val": 2.0, "unit": "us"},
+  "camera": 1,
+  "modality": "ir",
+  "processing": ["raw"],
+  "path": "...",
+  "confidence": 0.93
+}
+```
 
 5. **Structured output**
-   Each file becomes one row in index.jsonl/index.csv and optionally in the SQLite data table.
 
-This pipeline transforms loosely organized experiment folders into a structured dataset that can be queried, filtered, and analyzed programmatically.
+* **SQLite (primary for WETTER tools):** one row per file in the `data` table, plus `column_metadata` and optional `config`.  
+* **Optional ASCII exports:** `index.jsonl`, `index.csv`, `index_meta.json` for quick inspection, spreadsheets, or diffs.
+
+Step 5 details match the **Output** section below (defaults, tables, column layout).
 
 ---
 
 ## Configuration
 
-**CLI:** In script [filename_semantic_indexer.py](filename_semantic_indexer.py) adjust at the top: `ROOT_DIR`, `OUTPUT_DIR`, `ALLOWED_SUFFIXES`, `FOLDER_TOKEN_DEPTH`.
+**CLI:**
+Adjust in `filename_semantic_indexer.py`:
+`ROOT_DIR`, `OUTPUT_DIR`, `ALLOWED_SUFFIXES`, `FOLDER_TOKEN_DEPTH`. That script writes JSONL/CSV only; for SQLite use the GUI **Save to DB** or call `write_index_to_sqlite` from code.
 
-**GUI:** Set root and output folders; save schema as project.json/project.ini and reload ("Load root according to schema").
+**GUI:**
 
-**Naming conventions:** [Naming_Cheat_Sheet.md](Naming_Cheat_Sheet.md) (quick reference) | [Proper_file_naming.md](Proper_file_naming.md) (DE) | [Proper_file_naming_EN.md](Proper_file_naming_EN.md) (EN) – schema, recognized spellings, extension.
+* Set crawl **root** and **output** folder (default export folder: `root/_index`)
+* Set **database** path (default: `root/<root_folder_name>.db`, same rule as `default_db_path_for_root` in `db_writer.py`)
+* Save schema as `project.json` / `project.ini`
+* Reload via “Load root according to schema”
+
+**Naming conventions:**
+
+* [Naming_Cheat_Sheet.md](Naming_Cheat_Sheet.md)
+* [Proper_file_naming.md](Proper_file_naming.md) (DE)
+* [Proper_file_naming_EN.md](Proper_file_naming_EN.md) (EN)
 
 ---
 
 ## GUI and standalone EXE
 
-- **Start:** `python gui.py` or `dist\DAMPF.exe` (after build).
-- **Workflow:** Choose root folder → Start crawl → Check/adjust nomenclature → Save schema (project.json/ini) and/or save to database (SQLite).
-- **Schema:** Save detected structure as project.json (or project.ini); load any other root "according to schema" and crawl again.
-- **Detected keys (4.):** Two columns: "Display name" = label in exports (double-click to edit), "Key" = internal parameter name from parsing (read-only).
-- **Outliers / typos:** When paths deviate from the schema or likely typos in folder names, DAMPF shows an outlier list with suggestions (e.g. rare folder name similar to a frequent one). Optional: "Outliers only in path overview" filters the displayed paths.
-- **Build EXE:** `pyinstaller DAMPF.spec` → `dist\DAMPF.exe` (single file, no Python installation required).
-- Output (SQLite, JSONL/CSV) can be used by **WOLKE** (Dash/Plotly, SQL) and **BLITZ** (Image Viewer).
+* **Start:** `python gui.py` or `dist\DAMPF.exe`
+
+* **Workflow:**
+  Root folder → Crawl → Adjust nomenclature → Save schema → **Save to DB** (primary) → optional **Export JSONL/CSV** to `_index` (or chosen output folder)
+
+* **Schema handling:**
+  Save as `project.json` / `project.ini`
+  Reapply to new datasets
+
+* **Outlier detection:**
+
+  * Identifies inconsistent paths / typos
+  * Suggests corrections
+  * Optional filtered view (“Outliers only”)
+
+* **Build EXE:**
+  `pyinstaller DAMPF.spec` → `dist\DAMPF.exe`
+
+Outputs integrate directly with:
+
+* **WOLKE** (metadata exploration)
+* **BLITZ** (image visualization)
 
 ---
 
 ## Output
 
-DAMPF produces a structured index where each measurement file corresponds to one row in a dataset.
+Each indexed file corresponds to one row in the primary store (SQLite `data` table).
 
-- `index.jsonl` → One line per file (numeric values without unit columns)
-- `index.csv` → Excel-friendly overview (columns without unit)
-- `index_meta.json` → Column metadata (unit, raw_unit per quantitative column)
-- **SQLite** (optional): One data table `data` plus `column_metadata` (unit, raw_unit per column); optional `config` for DAMPF schema. DAMPF defines the schema; WOLKE/BLITZ build on it. Quantitative columns hold numeric values only; units in `column_metadata` (traceability).
-- Confidence score per file
+* **SQLite (primary handoff for WOLKE / BLITZ):** path is user-configurable; GUI default matches `default_db_path_for_root` in `db_writer.py` (`<crawl_root>/<root_folder_name>.db`, with sanitization and fallbacks).
+
+  * `data` table (values)
+  * `column_metadata` (units, traceability)
+  * optional `config`
+
+* **Optional ASCII exports** in the output folder (default `root/_index/`):
+
+  * `index.jsonl` — line-based, machine-readable
+  * `index.csv` — spreadsheet-friendly
+  * `index_meta.json` — column metadata (units, raw units)
+
+Includes:
+
+* numeric-only value columns
+* separate unit storage
+* confidence score per file
 
 ---
 
 ## Why rule-based?
 
-File names are usually semi-formal.  
-Rules are:
+File naming is typically semi-structured. Rule-based parsing is:
 
-- deterministic  
-- reproducible  
-- fast  
-- easy to debug  
+* deterministic
+* reproducible
+* fast
+* easy to debug
 
-A tiny LLM or ML model is optionally useful when:
+ML/LLM approaches are useful when:
 
-- naming conventions vary strongly  
-- many ambiguities occur  
-- new conventions should be recognized automatically  
+* naming conventions vary strongly
+* ambiguities increase
+* adaptive parsing is required
 
-Baseline is intentionally deterministic.
+The baseline is intentionally deterministic.
 
 ---
 
 ## Extension
 
-- Add new regex rules
-- Add domain-specific tokens
-- Refine confidence logic
-- Optional: ML fallback for unknown tokens
+* Add regex rules
+* Add domain-specific tokens
+* Refine confidence scoring
+* Optional: ML fallback for unknown tokens
 
 ---
-
-## Status
-
-Engineering baseline for structured indexing of large measurement archives. GUI and SQLite backend implemented; aggregations (min/max/mean per group) planned as next step.
