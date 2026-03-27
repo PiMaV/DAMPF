@@ -1,6 +1,6 @@
 [project]
 name = "dampf"
-version = "1.0.0"
+version = "1.0.1"
 description = "DAMPF - Filename Semantic Indexer (GUI)"
 readme = "README.MD"
 requires-python = ">=3.10"

@@ -1,51 +1,55 @@
-# Push und Release (Step by step)
+# Push und Release
 
-DAMPF nutzt nur den Branch **`main`**. GitHub Actions:
-
-| Aktion | Was passiert |
-|--------|----------------|
-| Push auf **`main`** (z. B. GitHub Desktop / IDE) | **CI** laeuft: `pytest` auf Linux (kein Windows-EXE-Build). |
-| Push eines Tags **`v*`** (nur sinnvoll per **CLI**) | **Release** laeuft: PyInstaller baut `DAMPF.exe` und haengt sie an das GitHub-Release. |
-
-Der **EXE-Build** startet also **nicht** beim normalen Pushen der App-Aenderungen, sondern **nur**, wenn du einen Versionstag per Kommandozeile pushst.
+**Branch:** nur `main`. **GitHub Actions:** Push auf `main` startet **CI** (`pytest`, Linux). Push eines Tags `v*` startet **Release** (Windows-`DAMPF.exe`). EXE-Build **nur** ueber Tag-Push, nicht ueber normalen Branch-Push.
 
 ---
 
-## Alltag: Aenderungen pushen (GUI)
+## Alltag (Aenderungen auf `main`)
 
-1. Aenderungen committen.
-2. In GitHub Desktop (oder Cursor / VS Code) auf **`main`** pushen.
-3. Fertig. Optional auf GitHub unter **Actions** pruefen: Workflow **CI** (Tests).
+Commit und Push wie ueblich (z. B. GIT in Cursor / GitHub Desktop). Danach optional unter **Actions** pruefen: Workflow **CI**.
 
 ---
 
-## Release: Version + Windows-EXE (CLI)
+## Release (Version + EXE)
 
-**Voraussetzung:** Repo lokal geklont, Remote `origin` zeigt auf GitHub.
+**Voraussetzung:** Repo geklont, `origin` = GitHub. **`pyproject.toml`**-`version` und der Tag (z. B. `v0.2.0`) **muessen zur selben Versionsnummer** passen.
 
-1. **Version setzen** in `pyproject.toml` bei `[project]` → `version = "x.y.z"` (ohne `v`, z. B. `0.2.0`).
+### Variante A (einfach): Alltag wie immer, dann nur Tag
 
-2. **Commit und Push auf `main`** (darfst du wieder per GUI machen):
-   - Commit-Nachricht z. B. `Bump version to 0.2.0`
-   - Push nach `origin/main`
+Wenn die neue Version **schon auf `main` liegt** (inkl. geaenderter `pyproject.toml`), reicht lokal:
 
-3. **Tag erstellen** (lokal, **CLI**), Tagname **muss** mit `v` beginnen und zur Version passen:
-   ```bash
-   git tag v0.2.0
-   ```
+```bash
+git pull origin main
+git tag v0.2.0
+git push origin v0.2.0
+```
 
-4. **Nur den Tag pushen** (loest den Release-Workflow aus):
-   ```bash
-   git push origin v0.2.0
-   ```
+(`v0.2.0` anpassen; `pull` vermeidet, dass der Tag auf einem alten Stand haengt.)
 
-5. Auf GitHub **Actions** → Workflow **Release** abwarten, dann unter **Releases** die `DAMPF.exe` finden.
+Das loest **Release** aus. Schritt 4 unten.
 
-**Hinweis:** Wenn der Tag schon existiert oder du die Version aendern willst: Tag lokal loeschen (`git tag -d v0.2.0`), auf GitHub ggf. Release/Tag entfernen, dann erneut ab Schritt 1.
+### Variante B: Version und Push in einem Shell-Schritt
+
+Wenn du den Release-Commit lieber komplett per CLI machst:
+
+```bash
+git add pyproject.toml
+# oder alle Aenderungen mitstagen:
+# git add .
+git commit -m "Bump version to 0.2.0"
+git push origin main
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+`git add .` ist ok, wenn **alles**, was du stagen willst, zu diesem Release gehoert (keine halbfertigen Dateien im Repo-Root).
+
+### Danach
+
+Auf GitHub **Actions** → **Release** abwarten, dann **Releases** → `DAMPF.exe`.
+
+**Tag/Repair:** `git tag -d v0.2.0`. Auf GitHub Release und Tag loeschen, dann erneut taggen/pushen.
 
 ---
 
-## Kurzcheck
-
-- Normaler Push **main** → nur **CI** (Tests).
-- `git push origin v1.2.3` → **Release** + EXE (Tag-Format `v*`).
+**Kurz:** `git push origin main` → nur Tests. `git push origin v0.2.0` → Release + EXE (Commit hinter dem Tag muss die passende `version` in `pyproject.toml` enthalten).
