@@ -1,5 +1,5 @@
 # indexer.py - Config-driven semantic indexer (used by CLI and GUI).
-# Naming conventions and recognized patterns: see Proper_file_naming_EN.md or Naming_Cheat_Sheet.md.
+# Naming conventions and recognized patterns: see docs/naming/Proper_file_naming_EN.md or docs/naming/Naming_Cheat_Sheet.md.
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from key_lut import GAS_KEYS, extract_val_for_export, format_val_unit, get_display_value, is_quantitative_val, unit_scale
+from dampf.key_lut import GAS_KEYS, extract_val_for_export, format_val_unit, get_display_value, is_quantitative_val, unit_scale
 
 # Default config (overridable via run_indexer config)
 DEFAULT_ALLOWED_SUFFIXES = {
@@ -771,7 +771,7 @@ def write_jsonl(
     column_si_scale: Dict[str, int] | None = None,
 ) -> None:
     """Export JSONL: numeric values; when column_si_scale.get(k)==0 convert to SI."""
-    from key_lut import get_export_value_and_metadata
+    from dampf.key_lut import get_export_value_and_metadata
     keep = set(used_keys) | {"path", "relpath"} if used_keys else None
     with out_path.open("w", encoding="utf-8") as f:
         for r in rows:
@@ -787,7 +787,7 @@ def write_csv(
     column_si_scale: Dict[str, int] | None = None,
 ) -> None:
     """Export CSV: numeric values; when column_si_scale.get(k)==0 convert to SI."""
-    from key_lut import get_export_value_and_metadata
+    from dampf.key_lut import get_export_value_and_metadata
     keep = set(used_keys) | {"path", "relpath"} if used_keys else None
     flat_rows: List[Dict[str, Any]] = []
     for r in rows:
@@ -815,7 +815,7 @@ def build_column_metadata(
     column_si_scale: Dict[str, int] | None = None,
 ) -> Dict[str, Dict[str, str]]:
     """Column -> {unit, raw_unit}. When si_scale=0: unit=SI base, raw_unit=original."""
-    from key_lut import SI_BASE_UNIT, get_export_value_and_metadata
+    from dampf.key_lut import SI_BASE_UNIT, get_export_value_and_metadata
     out: Dict[str, Dict[str, str]] = {}
     key_set: set[str] | None = set(keys) if keys else None
     if key_set is None:

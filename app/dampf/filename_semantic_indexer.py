@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-from indexer import (
+from dampf.indexer import (
     DEFAULT_ALLOWED_SUFFIXES,
     DEFAULT_MODALITY_MAP,
     DEFAULT_STOPWORDS,

@@ -25,7 +25,7 @@ Die **Group-Keys-Funktionalitaet** wurde aus DAMPF entfernt.
 ## Detected keys: flache Liste + Spalte "Group"
 
 - **Kein Kategorie-Baum mehr:** Die Keys werden als flache Liste angezeigt (eine Zeile pro Key), sortiert nach Pfadposition. Keine vorgegebenen LUT-Kategorien (Parameter, Gas, Frequency etc.).
-- **Spalte "Group (optional)":** Auswahl aus Vorgaben oder eigenes Label. Vorgaben per Default: Camera, Run, Source, Experiment, Modality (definiert in **gui.py** als `DEFAULT_GROUP_CHOICES`). Weitere Gruppen legt der Nutzer per Eingabe an; sie stehen sofort in allen Zeilen zur Verfuegung.
+- **Spalte "Group (optional)":** Auswahl aus Vorgaben oder eigenes Label. Vorgaben per Default: Camera, Run, Source, Experiment, Modality (definiert in **app/dampf/gui.py** als `DEFAULT_GROUP_CHOICES`). Weitere Gruppen legt der Nutzer per Eingabe an; sie stehen sofort in allen Zeilen zur Verfuegung.
 - **Persistenz:** Nutzer-definierte Gruppen werden in **dampf.ini** unter `[groups]` → `group_choices` gespeichert (beim Schliessen der GUI). Zusaetzlich beim "Save to DB" / "Load schema from DB" in der DB-config.
 - **Vorteil:** Flexibel gruppierbar (z.B. voltage + frequency = Source; frequency + exposure = Camera), ohne feste LUT-Vorgaben.
 

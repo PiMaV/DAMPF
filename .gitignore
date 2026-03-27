@@ -1,5 +1,6 @@
-# PyInstaller / EXE build (build/ + dist/ nur Zwischenergebnisse; DAMPF.spec bewusst im Repo)
-build/
+# PyInstaller / EXE build (track build/DAMPF.spec; ignore other build/ artifacts)
+build/**
+!build/DAMPF.spec
 dist/
 
 # Python

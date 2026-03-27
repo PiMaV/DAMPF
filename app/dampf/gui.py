@@ -11,7 +11,7 @@ import time
 from collections import Counter
 from pathlib import Path
 
-from indexer import (
+from dampf.indexer import (
     DEFAULT_ALLOWED_SUFFIXES,
     run_indexer,
     suggest_nomenclature,
@@ -21,9 +21,9 @@ from indexer import (
     write_index_meta,
     write_jsonl,
 )
-from db_writer import default_db_path_for_root, write_index_to_sqlite, load_schema_from_db
-from outlier_detection import detect_schema_outliers, detect_typo_candidates
-from key_lut import (
+from dampf.db_writer import default_db_path_for_root, write_index_to_sqlite, load_schema_from_db
+from dampf.outlier_detection import detect_schema_outliers, detect_typo_candidates
+from dampf.key_lut import (
     build_key_tree,
     exponent_to_unit,
     format_val_unit,
@@ -35,7 +35,7 @@ from key_lut import (
     SI_BASE_UNIT,
     unit_to_exponent,
 )
-from app_settings import load_settings, save_settings
+from dampf.app_settings import load_settings, save_settings
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QIcon, QTextBlockFormat, QTextCharFormat, QTextCursor
@@ -504,7 +504,8 @@ def _icon_path() -> Path:
     if getattr(sys, "frozen", False):
         base = Path(sys._MEIPASS)
     else:
-        base = Path(__file__).resolve().parent
+        # Repo root is two levels above app/dampf/gui.py
+        base = Path(__file__).resolve().parents[2]
     return base / "icon" / "icon.ico"
 
 

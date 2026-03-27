@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from indexer import (
+from dampf.indexer import (
     tokenize_string,
     parse_tokens,
     parse_number,
@@ -74,7 +74,7 @@ def test_parse_tokens_length():
 
 def test_lengths_export_numeric():
     """lengths: column numeric only, unit in metadata."""
-    from key_lut import get_export_value_and_metadata
+    from dampf.key_lut import get_export_value_and_metadata
     v = [{"val": 1.0, "unit": "mm", "SI_m": 0.001}]
     val, unit, raw = get_export_value_and_metadata(v, "lengths", None)
     assert val == 1.0
@@ -106,7 +106,7 @@ def test_split_transitions():
 
 def test_tokenize_and_parse_decimal_dot_in_path():
     """Decimal dot in path (4.2kv) is normalized and parsed correctly."""
-    from indexer import tokenize_path, parse_tokens
+    from dampf.indexer import tokenize_path, parse_tokens
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)

@@ -1,0 +1,33 @@
+# Windows onefile EXE when you push an annotated tag v* (e.g. v0.2.0).
+# Before tagging: set version in pyproject.toml to match the tag (without "v").
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build EXE
+        run: |
+          uv sync --extra dev
+          uv run python scripts/build_exe.py
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/DAMPF.exe
+          generate_release_notes: true

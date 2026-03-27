@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from db_writer import default_db_path_for_root
+from dampf.db_writer import default_db_path_for_root
 
 
 def test_default_db_uses_folder_name(tmp_path: Path) -> None:

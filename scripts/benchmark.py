@@ -11,10 +11,11 @@ import tempfile
 import time
 from pathlib import Path
 
-# Add project root for imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Add app/ so package dampf is importable without editable install
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "app"))
 
-from indexer import run_indexer
+from dampf.indexer import run_indexer
 
 
 def _log(msg: str) -> None:

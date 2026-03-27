@@ -1,7 +1,7 @@
 # test_key_lut.py - Unit tests for key_lut module
 
 import pytest
-from key_lut import (
+from dampf.key_lut import (
     unit_scale,
     unit_to_exponent,
     exponent_to_unit,

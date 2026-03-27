@@ -28,4 +28,4 @@ pip install PyQt6 pyinstaller
 python scripts/build_exe.py
 ```
 
-(Projekt-Root muss im PYTHONPATH sein oder du startest aus dem Ordner, in dem `gui.py`, `indexer.py` usw. liegen.)
+(Python-Paket `dampf` liegt unter `app/dampf/`; mit `uv sync` ist es im venv verfuegbar. Ohne uv: `PYTHONPATH=app` setzen, damit `import dampf` funktioniert.)

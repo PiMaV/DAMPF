@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from key_lut import get_display_value, get_export_value_and_metadata, is_quantitative_val
+from dampf.key_lut import get_display_value, get_export_value_and_metadata, is_quantitative_val
 
 _INVALID_DB_FILENAME_CHARS = frozenset('<>:"/\\|?*\n\r\t\x00')
 _WIN_RESERVED_STEMS = frozenset(
@@ -127,7 +127,7 @@ def write_index_to_sqlite(
 
     column_si_scale: Dict[str, int] = cfg.get("column_si_scale") or {}
 
-    from key_lut import get_export_value_and_metadata
+    from dampf.key_lut import get_export_value_and_metadata
     column_metadata: List[tuple] = []
     for i, k in enumerate(data_keys):
         unit_val = raw_unit_val = ""

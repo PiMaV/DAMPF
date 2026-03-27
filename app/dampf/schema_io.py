@@ -47,7 +47,7 @@ def config_to_schema(config: Dict[str, Any]) -> Dict[str, Any]:
 
 def schema_to_config(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Convert loaded schema (lists) to indexer config (sets/tuples where needed)."""
-    from indexer import DEFAULT_ALLOWED_SUFFIXES, DEFAULT_STOPWORDS
+    from dampf.indexer import DEFAULT_ALLOWED_SUFFIXES, DEFAULT_STOPWORDS
 
     cfg: Dict[str, Any] = dict(schema)
     if "allowed_suffixes" in cfg and isinstance(cfg["allowed_suffixes"], list):

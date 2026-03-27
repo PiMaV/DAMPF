@@ -2,7 +2,7 @@
 
 import pytest
 
-from outlier_detection import detect_schema_outliers, detect_typo_candidates
+from dampf.outlier_detection import detect_schema_outliers, detect_typo_candidates
 
 
 def _row(relpath: str, confidence: float = 0.8, **kwargs) -> dict:

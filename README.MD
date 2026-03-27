@@ -1,5 +1,9 @@
 # DAMPF — Data Aggregation & Modular Processing Framework
 
+## TL;DR
+
+Converts raw folder-based datasets into a structured **SQLite database** (and optional CSV/JSON exports) for querying, filtering, and analysis — usable standalone or as part of the WETTER framework.
+
 ## WETTER Framework
 
 [![Landing Page](https://img.shields.io/badge/WETTER-Landing_Page-0a0f14?style=flat-square)](https://wetter.mess.engineering)
@@ -40,13 +44,9 @@ The central entry point, ecosystem overview, and module navigation are available
 > It performs semantic indexing of file and folder structures and produces a **SQLite database** as its primary output: one row per file, typed columns, and supporting tables (`column_metadata`, optional `config`).
 > This turns raw archives into **structured metadata that can be queried, filtered, and used programmatically** (WOLKE, BLITZ, scripts).
 
-DAMPF scans experimental folders, extracts semantics from paths and filenames, and **writes that database** (GUI: **Save to DB**).
+---
 
-**Optional ASCII exports** in `root/_index/` (`index.jsonl`, `index.csv`, optional `index_meta.json`) are for quick human read, Excel, or diffs. They are not the primary handoff for the WETTER pipeline.
-
-*File- and folder-based semantic indexing engine*: This pipeline transforms loosely organized experiment folders into a structured dataset that can be queried, filtered, and analyzed programmatically.
-
-![DAMPF GUI](docs/Screenshot_GUI_Example.png)
+![DAMPF GUI](docs/images/Screenshot_GUI_Example.png)
 
 ---
 
@@ -115,28 +115,30 @@ Step 5 details match the **Output** section below (defaults, tables, column layo
 
 ## Configuration
 
+The GUI still reads and writes `dampf.ini` next to the executable (frozen) or in the current working directory (dev). A reference copy of the default layout is in [`config/dampf.ini`](config/dampf.ini).
+
 **CLI:**
-Adjust in `filename_semantic_indexer.py`:
+Adjust in `app/dampf/filename_semantic_indexer.py`:
 `ROOT_DIR`, `OUTPUT_DIR`, `ALLOWED_SUFFIXES`, `FOLDER_TOKEN_DEPTH`. That script writes JSONL/CSV only; for SQLite use the GUI **Save to DB** or call `write_index_to_sqlite` from code.
 
 **GUI:**
 
 * Set crawl **root** and **output** folder (default export folder: `root/_index`)
-* Set **database** path (default: `root/<root_folder_name>.db`, same rule as `default_db_path_for_root` in `db_writer.py`)
+* Set **database** path (default: `root/<root_folder_name>.db`, same rule as `default_db_path_for_root` in `app/dampf/db_writer.py`)
 * Save schema as `project.json` / `project.ini`
 * Reload via “Load root according to schema”
 
 **Naming conventions:**
 
-* [Naming_Cheat_Sheet.md](Naming_Cheat_Sheet.md)
-* [Proper_file_naming.md](Proper_file_naming.md) (DE)
-* [Proper_file_naming_EN.md](Proper_file_naming_EN.md) (EN)
+* [Naming_Cheat_Sheet.md](docs/naming/Naming_Cheat_Sheet.md)
+* [Proper_file_naming.md](docs/naming/Proper_file_naming.md) (DE)
+* [Proper_file_naming_EN.md](docs/naming/Proper_file_naming_EN.md) (EN)
 
 ---
 
 ## GUI and standalone EXE
 
-* **Start:** `python gui.py` or `dist\DAMPF.exe`
+* **Start:** `uv run dampf`, or `python -m dampf.gui` (with `app` on `PYTHONPATH`, e.g. `set PYTHONPATH=app` before `python`), or `dist\DAMPF.exe`
 
 * **Workflow:**
   Root folder → Crawl → Adjust nomenclature → Save schema → **Save to DB** (primary) → optional **Export JSONL/CSV** to `_index` (or chosen output folder)
@@ -152,7 +154,7 @@ Adjust in `filename_semantic_indexer.py`:
   * Optional filtered view (“Outliers only”)
 
 * **Build EXE:**
-  `pyinstaller DAMPF.spec` → `dist\DAMPF.exe`
+  `pyinstaller build/DAMPF.spec` → `dist\DAMPF.exe` (or `uv run python scripts/build_exe.py`)
 
 Outputs integrate directly with:
 
@@ -165,7 +167,7 @@ Outputs integrate directly with:
 
 Each indexed file corresponds to one row in the primary store (SQLite `data` table).
 
-* **SQLite (primary handoff for WOLKE / BLITZ):** path is user-configurable; GUI default matches `default_db_path_for_root` in `db_writer.py` (`<crawl_root>/<root_folder_name>.db`, with sanitization and fallbacks).
+* **SQLite (primary handoff for WOLKE / BLITZ):** path is user-configurable; GUI default matches `default_db_path_for_root` in `app/dampf/db_writer.py` (`<crawl_root>/<root_folder_name>.db`, with sanitization and fallbacks).
 
   * `data` table (values)
   * `column_metadata` (units, traceability)
