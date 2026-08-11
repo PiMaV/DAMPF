@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all
@@ -14,6 +15,8 @@ else:
     raise RuntimeError("Could not find repo root (pyproject.toml) from spec path")
 _icon_dir = _repo_root / "icon"
 _gui_script = _repo_root / "app" / "dampf" / "gui.py"
+# Windows prefers .ico; Linux desktop icon embedding works better with PNG.
+_icon_path = _icon_dir / ("icon.ico" if sys.platform == "win32" else "icon_256.png")
 
 datas = [(str(_icon_dir), "icon")]
 binaries = []
@@ -64,5 +67,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=[str(_repo_root / "icon" / "icon.ico")],
+    icon=[str(_icon_path)] if _icon_path.is_file() else None,
 )

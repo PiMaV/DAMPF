@@ -1,4 +1,4 @@
-# Windows onefile EXE when you push an annotated tag v* (e.g. v0.2.0).
+# Onefile binaries when you push a tag v* (e.g. v0.2.0).
 # Before tagging: set version in pyproject.toml to match the tag (without "v").
 name: Release
 
@@ -30,4 +30,42 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/DAMPF.exe
+          generate_release_notes: true
+
+  build-linux-binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-cursor0 \
+            libxkbcommon-x11-0 \
+            libegl1 \
+            libgl1 \
+            libdbus-1-3 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libxcb-shape0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build binary
+        run: |
+          uv sync --extra dev
+          uv run python scripts/build_exe.py
+          mv dist/DAMPF dist/DAMPF-linux-x86_64
+          chmod +x dist/DAMPF-linux-x86_64
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/DAMPF-linux-x86_64
           generate_release_notes: true

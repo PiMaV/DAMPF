@@ -1,4 +1,8 @@
-"""Build DAMPF GUI as a standalone .exe using PyInstaller. Run from repo root with: uv run python scripts/build_exe.py"""
+"""Build DAMPF GUI as a standalone binary using PyInstaller.
+
+Windows: dist/DAMPF.exe. Linux: dist/DAMPF.
+Run from repo root with: uv run python scripts/build_exe.py
+"""
 from __future__ import annotations
 
 import subprocess
@@ -14,11 +18,16 @@ def main() -> None:
         print("build/DAMPF.spec not found")
         sys.exit(1)
     icon_ico = REPO_ROOT / "icon" / "icon.ico"
-    if not icon_ico.is_file():
-        print("icon/icon.ico not found")
+    icon_png = REPO_ROOT / "icon" / "icon_256.png"
+    if sys.platform == "win32":
+        if not icon_ico.is_file():
+            print("icon/icon.ico not found")
+            sys.exit(1)
+    elif not icon_png.is_file() and not icon_ico.is_file():
+        print("icon/icon_256.png (or icon/icon.ico) not found")
         sys.exit(1)
     args = [sys.executable, "-m", "PyInstaller", str(spec)]
-    subprocess.run(args, cwd=REPO_ROOT)
+    subprocess.run(args, cwd=REPO_ROOT, check=True)
 
 
 if __name__ == "__main__":

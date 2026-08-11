@@ -1,11 +1,12 @@
-# EXE bauen (Windows)
+# Standalone binary bauen (Windows / Linux)
 
-Mit **uv** und **PyInstaller** eine standalone DAMPF.exe erzeugen.
+Mit **uv** und **PyInstaller** eine standalone DAMPF-Binary erzeugen.
 
 ## Voraussetzung
 
 - [uv](https://docs.astral.sh/uv/) installieren (z.B. `pip install uv` oder Installer von astral.sh).
 - Im Projektordner (Repo-Root).
+- **Linux:** Qt/X11-Bibliotheken fuer PyQt6 (z. B. `libxcb-cursor0`, `libxkbcommon-x11-0`, `libegl1`, `libgl1`).
 
 ## Schritte
 
@@ -13,11 +14,16 @@ Mit **uv** und **PyInstaller** eine standalone DAMPF.exe erzeugen.
 # Abhaengigkeiten inkl. PyInstaller (dev)
 uv sync --extra dev
 
-# EXE bauen (nutzt icon/icon.ico)
+# Binary bauen (nutzt icon/icon.ico unter Windows, icon/icon_256.png unter Linux)
 uv run python scripts/build_exe.py
 ```
 
-Die EXE liegt danach unter `dist/DAMPF.exe`. Das Fenster-Icon kommt aus `icon/icon.ico` (wird im Code ueber `window.setWindowIcon(QIcon(str(p)))` gesetzt).
+Ausgabe:
+
+* **Windows:** `dist/DAMPF.exe`
+* **Linux:** `dist/DAMPF` (Release-Workflow benennt zu `DAMPF-linux-x86_64` um)
+
+Das Fenster-Icon kommt aus `icon/` (wird im Code ueber `window.setWindowIcon(QIcon(str(p)))` gesetzt).
 
 ## Ohne uv
 
@@ -29,3 +35,7 @@ python scripts/build_exe.py
 ```
 
 (Python-Paket `dampf` liegt unter `app/dampf/`; mit `uv sync` ist es im venv verfuegbar. Ohne uv: `PYTHONPATH=app` setzen, damit `import dampf` funktioniert.)
+
+## CI Release
+
+Tag `v*` auf GitHub baut automatisch beide Plattformen — siehe [Push_and_Release.md](Push_and_Release.md).

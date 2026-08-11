@@ -1,6 +1,6 @@
 # Push und Release
 
-**Branch:** nur `main`. **GitHub Actions:** Push auf `main` startet **CI** (`pytest`, Linux). Push eines Tags `v*` startet **Release** (Windows-`DAMPF.exe`). EXE-Build **nur** ueber Tag-Push, nicht ueber normalen Branch-Push.
+**Branch:** nur `main`. **GitHub Actions:** Push auf `main` startet **CI** (`pytest`, Linux). Push eines Tags `v*` startet **Release** (Windows-`DAMPF.exe` und Linux-`DAMPF-linux-x86_64`). Binary-Build **nur** ueber Tag-Push, nicht ueber normalen Branch-Push.
 
 ---
 
@@ -10,9 +10,9 @@ Commit und Push wie ueblich (z. B. GIT in Cursor / GitHub Desktop). Danach optio
 
 ---
 
-## Release (Version + EXE)
+## Release (Version + Binaries)
 
-**Voraussetzung:** Repo geklont, `origin` = GitHub. **`pyproject.toml`**-`version` und der Tag (z. B. `v0.2.0`) **muessen zur selben Versionsnummer** passen.
+**Voraussetzung:** Repo geklont, `origin` = GitHub. **`pyproject.toml`-`version`** und der Tag (z. B. `v0.2.0`) **muessen zur selben Versionsnummer** passen.
 
 ### Variante A (einfach): Alltag wie immer, dann nur Tag
 
@@ -46,10 +46,13 @@ git push origin v0.2.0
 
 ### Danach
 
-Auf GitHub **Actions** → **Release** abwarten, dann **Releases** → `DAMPF.exe`.
+Auf GitHub **Actions** → **Release** abwarten (Jobs `build-windows-exe` und `build-linux-binary`), dann **Releases**:
+
+* `DAMPF.exe` — Windows
+* `DAMPF-linux-x86_64` — Ubuntu/Linux x86_64 (ausfuehrbar machen: `chmod +x DAMPF-linux-x86_64`)
 
 **Tag/Repair:** `git tag -d v0.2.0`. Auf GitHub Release und Tag loeschen, dann erneut taggen/pushen.
 
 ---
 
-**Kurz:** `git push origin main` → nur Tests. `git push origin v0.2.0` → Release + EXE (Commit hinter dem Tag muss die passende `version` in `pyproject.toml` enthalten).
+**Kurz:** `git push origin main` → nur Tests. `git push origin v0.2.0` → Release + Windows- und Linux-Binary (Commit hinter dem Tag muss die passende `version` in `pyproject.toml` enthalten).
