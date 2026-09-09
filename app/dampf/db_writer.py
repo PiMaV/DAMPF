@@ -1,4 +1,4 @@
-# db_writer.py - Write index to SQLite per BLITZ_Receiver_Contract (WOLKE/DAMPF).
+# db_writer.py - Write index to SQLite per WETTER Viewer Contract (WOLKE/DAMPF).
 # One data table: id, relative_filepath_column (path relative to DB directory), plus all indexed fields.
 
 from __future__ import annotations
