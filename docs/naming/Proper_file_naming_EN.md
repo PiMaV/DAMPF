@@ -73,6 +73,7 @@ Both work; explicit is always unambiguous, implicit is shorter.
 | Temperature | c, °c, k | temp (val+unit) |
 | Date | 2024-02-07, 20240207 | date |
 | Time (HHMMSS) | 141710 next to a date, or alone if clock-plausible | time (`14:17:10`); not frame. Last filename number stays frame. |
+| Compact datetime | `YYYYMMDDHHMMSS` or `IMG20220601093439` | date + time (`2022-06-01`, `09:34:39`); letter prefix splits off |
 | `frame_<ch>_<n>` | frame_004_0000 | channel + frame |
 | Run/Rep/Trial | run1, rep2, trial3 | run, rep, trial |
 | Letter(s)+number | M25, S4, T250 | key=value (e.g. m=25) |

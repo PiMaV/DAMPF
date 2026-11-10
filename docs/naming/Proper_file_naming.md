@@ -72,6 +72,7 @@ Beides funktioniert; explizit ist immer eindeutig, implizit ist kuerzer.
 | Temperatur | c, °c, k | temp (val+unit) |
 | Datum | 2024-02-07, 20240207 | date |
 | Uhrzeit (HHMMSS) | 141710 neben Datum, oder allein wenn uhrplausibel | time (`14:17:10`); nicht frame. Letzte Dateiname-Zahl bleibt frame. |
+| Kompaktes Datum+Zeit | `YYYYMMDDHHMMSS` oder `IMG20220601093439` | date + time (`2022-06-01`, `09:34:39`); Buchstaben-Präfix wird abgetrennt |
 | `frame_<ch>_<n>` | frame_004_0000 | channel + frame |
 | Run/Rep/Trial | run1, rep2, trial3 | run, rep, trial |
 | Buchstabe(n)+Zahl (Parameter) | M25, S4, T250 | 1–3 Buchstaben + Zahl → key=value (z.B. m=25) |

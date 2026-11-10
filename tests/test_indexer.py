@@ -197,6 +197,40 @@ def test_last_filename_digits_stay_frame_even_if_hhmmss_shaped():
     assert "time" not in pr.data
 
 
+def test_tokenize_splits_img_compact_datetime():
+    """IMG20220601093439 → img + 14-digit stamp (not param img=<huge>)."""
+    assert tokenize_string("IMG20220601093439") == ["img", "20220601093439"]
+    assert tokenize_string("run1") == ["run1"]
+
+
+def test_compact_yyyymmddhhmmss_sets_date_and_time():
+    """Bare or camera-prefixed YYYYMMDDHHMMSS → date + time, never frame."""
+    from dampf.indexer import parse_tokens, tokenize_string
+
+    bare = parse_tokens(tokenize_string("20220601093439"), only_last_plain_digits_as_frame=True)
+    assert bare.data.get("date") == "2022-06-01"
+    assert bare.data.get("time") == "09:34:39"
+    assert "frame" not in bare.data
+
+    glued = parse_tokens(tokenize_string("IMG20220601093439"), only_last_plain_digits_as_frame=True)
+    assert glued.data.get("date") == "2022-06-01"
+    assert glued.data.get("time") == "09:34:39"
+    assert "frame" not in glued.data
+
+
+def test_img_compact_datetime_file_indexed():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "Training" / "Compressed").mkdir(parents=True)
+        (root / "Training" / "Compressed" / "IMG20220601093439.jpg").touch()
+        rows, _ = run_indexer(root, root / "_index")
+        assert len(rows) == 1
+        assert rows[0].get("date") == "2022-06-01"
+        assert rows[0].get("time") == "09:34:39"
+        assert "frame" not in rows[0] or rows[0].get("frame") is None
+
+
 def test_run_indexer_sequential():
     """run_indexer with few files uses sequential path."""
     import tempfile

@@ -111,6 +111,29 @@ def split_transitions(s: str) -> List[str]:
     return parts if parts else [s]
 
 
+def parse_compact_datetime(tok: str) -> Optional[Tuple[str, str]]:
+    """If tok is YYYYMMDDHHMMSS with a plausible calendar+clock, return (date ISO, HH:MM:SS)."""
+    if not re.fullmatch(r"\d{14}", tok):
+        return None
+    y, mo, d = int(tok[0:4]), int(tok[4:6]), int(tok[6:8])
+    hh, mm, ss = int(tok[8:10]), int(tok[10:12]), int(tok[12:14])
+    if not (2000 <= y <= 2099 and 1 <= mo <= 12 and 1 <= d <= 31):
+        return None
+    if not (0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59):
+        return None
+    return f"{y:04d}-{mo:02d}-{d:02d}", f"{hh:02d}:{mm:02d}:{ss:02d}"
+
+
+def _param_digit_part_is_datetime_or_date(digit_part: str) -> bool:
+    """True when a glued letter+digits token should split (camera IMG… timestamps)."""
+    if parse_compact_datetime(digit_part) is not None:
+        return True
+    if re.fullmatch(r"20\d{6}", digit_part):
+        mo, d = int(digit_part[4:6]), int(digit_part[6:8])
+        return 1 <= mo <= 12 and 1 <= d <= 31
+    return False
+
+
 def tokenize_string(
     s: str,
     stopwords: Optional[set] = None,
@@ -134,8 +157,16 @@ def tokenize_string(
             out.append(pl)
             norm_to_orig.setdefault(pl, p)
         elif RE_PARAM_TOKEN.match(pl):
-            out.append(pl)
-            norm_to_orig.setdefault(pl, p)
+            m = RE_PARAM.match(pl)
+            # IMG20220601093439 → img + 20220601093439 (not param img=<huge>)
+            if m and _param_digit_part_is_datetime_or_date(m.group(2)):
+                letter_part, digit_part = m.group(1), m.group(2)
+                for piece, orig_piece in ((letter_part, p[: len(letter_part)]), (digit_part, p[len(letter_part) :])):
+                    out.append(piece)
+                    norm_to_orig.setdefault(piece, orig_piece)
+            else:
+                out.append(pl)
+                norm_to_orig.setdefault(pl, p)
         elif RE_NUM_LETTERS_TOKEN.match(pl):
             out.append(pl)
             norm_to_orig.setdefault(pl, p)
@@ -339,6 +370,20 @@ def parse_tokens(
             if 1 <= mo <= 12 and 1 <= d <= 31:
                 set_field("date", f"{y:04d}-{mo:02d}-{d:02d}", "date", tok)
                 continue
+        # Compact camera timestamp: YYYYMMDDHHMMSS → date + time (one token)
+        dt14 = parse_compact_datetime(tok)
+        if dt14 is not None:
+            date_s, time_s = dt14
+            if "date" not in data:
+                data["date"] = date_s
+                trace.append("date:datetime14")
+            if "time" not in data:
+                data["time"] = time_s
+                trace.append("time:datetime14")
+            if tok not in token_to_key:
+                token_to_key[tok] = "date"
+                recognized += 1
+            continue
         m = RE_KV.match(tok)
         if m:
             k, v = m.group("k").lower(), m.group("v").lower()
@@ -392,6 +437,20 @@ def parse_tokens(
         m = RE_PARAM.match(tok)
         if m:
             key, val = m.group(1), m.group(2)
+            # Defensive: glued IMG20220601093439 if tokenize did not split
+            dt_param = parse_compact_datetime(val)
+            if dt_param is not None:
+                date_s, time_s = dt_param
+                if "date" not in data:
+                    data["date"] = date_s
+                    trace.append("date:datetime14")
+                if "time" not in data:
+                    data["time"] = time_s
+                    trace.append("time:datetime14")
+                if tok not in token_to_key:
+                    token_to_key[tok] = "date"
+                    recognized += 1
+                continue
             if key not in data:
                 data[key] = int(val)
                 trace.append(f"{key}:param")

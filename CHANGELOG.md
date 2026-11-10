@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Compact `YYYYMMDDHHMMSS` tokens (and glued prefixes like `IMG20220601093439`) map to `date` + `time`.
+
 ### Changed
 
 ### Fixed

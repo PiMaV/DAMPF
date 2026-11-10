@@ -35,6 +35,7 @@ One-page quick reference. Full docs: [Proper_file_naming_EN.md](Proper_file_nami
 | 2024-02-07 | date | run1, rep2 | run, rep |
 | 000, 001 | frame | cam1, C1 | camera, channel |
 | 141710 | time | frame_004_0000 | channel+frame |
+| IMG20220601093439 | date+time | 20220601093439 | date+time |
 | M25, S4 | param | key=value | explicit |
 
 ---
