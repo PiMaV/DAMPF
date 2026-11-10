@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from dampf.indexer import DEFAULT_ALLOWED_SUFFIXES
+
 # Keys that must be lists in JSON (stored as list, converted to set when building indexer config)
 LIST_KEYS = ("allowed_suffixes", "stopwords")
 SET_KEYS = ("allowed_suffixes", "stopwords")
@@ -14,7 +16,7 @@ SET_KEYS = ("allowed_suffixes", "stopwords")
 DEFAULT_SCHEMA = {
     "root_dir": "",
     "output_dir": "",
-    "allowed_suffixes": [".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".csv", ".tsv", ".txt", ".dat", ".asc", ".npy", ".npz", ".h5", ".hdf5", ".json", ".yaml", ".yml"],
+    "allowed_suffixes": sorted(DEFAULT_ALLOWED_SUFFIXES),
     "folder_token_depth": 99,
     "recursive": True,
     "include_hidden": False,

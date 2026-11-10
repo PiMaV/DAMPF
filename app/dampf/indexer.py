@@ -19,7 +19,7 @@ from dampf.key_lut import GAS_KEYS, extract_val_for_export, format_val_unit, get
 
 # Default config (overridable via run_indexer config)
 DEFAULT_ALLOWED_SUFFIXES = {
-    ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp",
+    ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".img",
     ".csv", ".tsv", ".txt", ".dat", ".asc",
     ".npy", ".npz",
     ".h5", ".hdf5",
@@ -206,6 +206,27 @@ def parse_number(s: str) -> Optional[float]:
         return None
 
 
+def format_hhmmss(tok: str) -> Optional[str]:
+    """If tok is six digits and a plausible clock time, return HH:MM:SS; else None."""
+    if not re.fullmatch(r"\d{6}", tok):
+        return None
+    hh, mm, ss = int(tok[0:2]), int(tok[2:4]), int(tok[4:6])
+    if 0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59:
+        return f"{hh:02d}:{mm:02d}:{ss:02d}"
+    return None
+
+
+def _token_looks_like_date(tok: str) -> bool:
+    m = (
+        RE_DATE_ISO_DASH.match(tok)
+        or RE_DATE_ISO.match(tok)
+        or RE_DATE_COMPACT.match(tok)
+        or RE_DATE_EU.match(tok)
+    )
+    if not m:
+        return False
+    y, mo, d = int(m.group("y")), int(m.group("m")), int(m.group("d"))
+    return 1 <= mo <= 12 and 1 <= d <= 31
 
 
 @dataclass
@@ -303,8 +324,9 @@ def parse_tokens(
                 token_to_key[token] = k
 
     n_tokens = len(tokens)
+    skip_indices: set[int] = set()
     for idx, tok in enumerate(tokens):
-        if not tok:
+        if not tok or idx in skip_indices:
             continue
         m = (
             RE_DATE_ISO_DASH.match(tok)
@@ -350,6 +372,19 @@ def parse_tokens(
         if m:
             set_field("roi", m.group("id"), "roi", tok)
             continue
+        # Camera cache style: frame_<channel>_<frame> (e.g. frame_004_0000)
+        if tok == "frame" and idx + 2 < n_tokens:
+            a, b = tokens[idx + 1], tokens[idx + 2]
+            if re.fullmatch(r"\d+", a) and re.fullmatch(r"\d+", b):
+                set_field("channel", int(a), "frame_pair", a)
+                set_field("frame", int(b), "frame_pair", b)
+                if tok not in token_to_key:
+                    token_to_key[tok] = "frame"
+                    recognized += 1
+                    trace.append("frame:label")
+                skip_indices.add(idx + 1)
+                skip_indices.add(idx + 2)
+                continue
         m = RE_FRAME.match(tok)
         if m:
             set_field("frame", int(m.group("n")), "frame", tok)
@@ -363,8 +398,20 @@ def parse_tokens(
                 recognized += 1
                 token_to_key[tok] = key
             continue
-        # Plain digits (0, 18, 220) as frame first, so numbers without leading zeros are not misclassified as seq
+        # Plain digits: HHMMSS → time (plausible clock, stronger if next to a date);
+        # last filename number stays frame. Otherwise frame/seq as before.
         if re.fullmatch(r"\d+", tok):
+            time_str = format_hhmmss(tok)
+            as_last_file_frame = only_last_plain_digits_as_frame and idx == n_tokens - 1
+            if time_str is not None and not as_last_file_frame:
+                # Plausible HHMMSS → time (not frame). Trace notes date adjacency when present.
+                near_date = "date" in data or (
+                    (idx > 0 and _token_looks_like_date(tokens[idx - 1]))
+                    or (idx + 1 < n_tokens and _token_looks_like_date(tokens[idx + 1]))
+                )
+                why = "time_after_date" if near_date else "time_hhmmss"
+                set_field("time", time_str, why, tok)
+                continue
             if only_last_plain_digits_as_frame:
                 if idx == n_tokens - 1:
                     if "frame" not in data:
@@ -674,10 +721,13 @@ def _index_single_file(
     row["stem"] = p.stem
     row["tokens"] = tokens
     row["trace"] = pr_file.trace
+    # Confidence / recognized counts use the filename only so deep folder trees
+    # (Project…/cache/…) do not dilute the score. Folder keys still populate the row.
+    n_file = len(file_tokens)
     row["recognized"] = pr_file.recognized
-    row["total_tokens"] = len(tokens)
+    row["total_tokens"] = n_file
     row["confidence"] = round(
-        (1.0 - math.exp(-3.0 * pr_file.recognized / max(1, len(tokens)))), 4
+        (1.0 - math.exp(-3.0 * pr_file.recognized / max(1, n_file))), 4
     )
     return row
 

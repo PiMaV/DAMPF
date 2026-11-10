@@ -1,6 +1,6 @@
 # Proper Path and File Names
 
-Conventions for paths and filenames; the **DAMPF Indexer** ([indexer.py](indexer.py)) is tuned to these patterns.
+Conventions for paths and filenames; the **DAMPF Indexer** ([../../app/dampf/indexer.py](../../app/dampf/indexer.py)) is tuned to these patterns.
 
 **Quick ref:** [Naming_Cheat_Sheet.md](Naming_Cheat_Sheet.md) | **Deutsch:** [Proper_file_naming.md](Proper_file_naming.md)
 
@@ -72,13 +72,14 @@ Both work; explicit is always unambiguous, implicit is shorter.
 | Length | nm, um, mm, cm, m, px | lengths |
 | Temperature | c, °c, k | temp (val+unit) |
 | Date | 2024-02-07, 20240207 | date |
+| Time (HHMMSS) | 141710 next to a date, or alone if clock-plausible | time (`14:17:10`); not frame. Last filename number stays frame. |
+| `frame_<ch>_<n>` | frame_004_0000 | channel + frame |
 | Run/Rep/Trial | run1, rep2, trial3 | run, rep, trial |
 | Letter(s)+number | M25, S4, T250 | key=value (e.g. m=25) |
 | Number+letter(s) | 300He, 300N2 | key=value; He/N2/CO2 = gas % |
 | Flow (slm) | 5slmAr, 10slmN2 | gas_flow (val, unit=slm, gas) |
 | Letters only (2–4) | FF, KPSc | string param key=value |
-| Frame (digits only) | 000, 001, 040, 165 | frame (integer, 3+ digits) |
-| Seq/Session (1–2 digits) | 07 in 10mm_07 | seq |
+| Frame (digits only) | 000, 001, 040, 165, 07 | frame (integer; plain digits at end of filename) |
 | Camera/Channel | cam1, channel2, C1, C2, C3 | camera, channel |
 | key=value | arbitrary | stored as key-value |
 | Processing tags | raw, dark, flat, avg, … | processing (list) |
@@ -126,8 +127,8 @@ Running numbers at end, with leading zeros:
 
 To add new units or patterns:
 
-1. **New value+unit (e.g. sccm, bar):** Add unit to `RE_NUMBER_UNIT` and matching RE_* in [indexer.py](indexer.py); possibly new RE_*, `unit_scale()`, and parsing in `parse_tokens()`. Document here under Recognized.
+1. **New value+unit (e.g. sccm, bar):** Add unit to `RE_NUMBER_UNIT` and matching RE_* in [../../app/dampf/indexer.py](../../app/dampf/indexer.py); possibly new RE_*, `unit_scale()`, and parsing in `parse_tokens()`. Document here under Recognized.
 
-2. **New tags/modality/keys:** Extend `MODALITY_MAP` or `PROC_TAGS` in [indexer.py](indexer.py), or add key=value pattern. Document under Recognized.
+2. **New tags/modality/keys:** Extend `MODALITY_MAP` or `PROC_TAGS` in [../../app/dampf/indexer.py](../../app/dampf/indexer.py), or add key=value pattern. Document under Recognized.
 
 3. **Project-specific (no code change):** Adjust `modality_map` and `stopwords` via project.json / GUI.

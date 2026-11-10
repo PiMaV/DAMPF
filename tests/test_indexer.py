@@ -131,6 +131,72 @@ def test_detect_dominant_suffix():
         assert detect_dominant_suffix(root) == ".tif"
 
 
+def test_img_suffix_is_indexed():
+    """Camera .img files are crawled by default (path metadata only)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "run1_500us_001.img").touch()
+        rows, _ = run_indexer(root, root / "_index")
+        assert len(rows) == 1
+        assert rows[0].get("ext") == ".img"
+        assert rows[0].get("run") == 1
+        assert rows[0].get("exposure") == {"val": 500.0, "unit": "us"}
+
+
+def test_confidence_uses_filename_tokens_only():
+    """Deep Project/…/cache folders must not dilute confidence below the default outlier threshold."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        rel = Path("Project20250317_141710") / "data" / "20250317_141746" / "cache" / "frame_004_0000.img"
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).touch()
+        rows, _ = run_indexer(root, root / "_index")
+        assert len(rows) == 1
+        assert rows[0]["total_tokens"] == 3  # frame, 004, 0000 — not folder tokens
+        assert rows[0]["recognized"] == 3
+        assert rows[0]["confidence"] >= 0.3
+        assert rows[0].get("channel") == 4
+        assert rows[0].get("frame") == 0
+        assert rows[0].get("date") == "2025-03-17"
+        assert rows[0].get("time") == "14:17:10"
+        # Folder clock must not steal frame from the filename pair
+        assert rows[0].get("_folder_token_to_key", {}).get("141710") == "time"
+
+
+def test_frame_channel_pair_pattern():
+    """frame_<channel>_<frame> in the filename maps both numbers."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "frame_001_0011.img").touch()
+        rows, _ = run_indexer(root, root / "_index")
+        assert rows[0].get("channel") == 1
+        assert rows[0].get("frame") == 11
+
+
+def test_hhmmss_time_not_frame_in_folder():
+    """Six-digit clock after a compact date becomes time, not frame."""
+    from dampf.indexer import parse_tokens, tokenize_string
+
+    toks = tokenize_string("20250317_141746")
+    pr = parse_tokens(toks)
+    assert pr.data.get("date") == "2025-03-17"
+    assert pr.data.get("time") == "14:17:46"
+    assert "frame" not in pr.data
+
+
+def test_last_filename_digits_stay_frame_even_if_hhmmss_shaped():
+    """Trailing filename number remains frame (camera index), not wall-clock time."""
+    from dampf.indexer import parse_tokens, tokenize_string
+
+    toks = tokenize_string("shot_120000")
+    pr = parse_tokens(toks, only_last_plain_digits_as_frame=True)
+    assert pr.data.get("frame") == 120000
+    assert "time" not in pr.data
+
+
 def test_run_indexer_sequential():
     """run_indexer with few files uses sequential path."""
     import tempfile

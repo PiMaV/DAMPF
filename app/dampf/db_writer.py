@@ -89,6 +89,7 @@ def write_index_to_sqlite(
     *,
     schema_config: Optional[Dict[str, Any]] = None,
     used_keys: Optional[List[str]] = None,
+    categorical_keys: Optional[List[str]] = None,
 ) -> None:
     """
     Create SQLite DB per BLITZ_Receiver_Contract:
@@ -98,12 +99,14 @@ def write_index_to_sqlite(
       plus all indexed fields as columns (REAL/INTEGER/TEXT).
     - Optional table "config" for DAMPF schema (load from DB).
     groups is no longer written to DB (contract requires only the single data table).
+    categorical_keys: force TEXT affinity so WOLKE treats them as filters (not histograms).
     """
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     cfg = schema_config or {}
     table_name = _quote_table(str(cfg.get("table_name") or "data"))
     relpath_col = _quote_id(str(cfg.get("relative_filepath_column") or "relpath"))
+    cat_set = set(categorical_keys or [])
 
     # Data keys: if used_keys given only those; else all (excluding meta)
     data_keys_set: set[str] = set()
@@ -155,9 +158,15 @@ def write_index_to_sqlite(
         conn.execute("DROP TABLE IF EXISTS column_metadata")
 
         # Columns: id, relpath_col, then col_names; types: int->INTEGER, float->REAL, else TEXT
+        # Cat keys always TEXT so WOLKE shows them as categorical filters.
         col_defs = ["id INTEGER PRIMARY KEY AUTOINCREMENT", relpath_col + " TEXT NOT NULL"]
         for i, cname in enumerate(col_names):
-            col_defs.append(cname + " " + _sql_type_for_key(rows, data_keys[i], use_extracted_val=True))
+            key = data_keys[i]
+            if key in cat_set:
+                sql_type = "TEXT"
+            else:
+                sql_type = _sql_type_for_key(rows, key, use_extracted_val=True)
+            col_defs.append(cname + " " + sql_type)
         create_sql = "CREATE TABLE " + table_name + " (\n    " + ",\n    ".join(col_defs) + "\n)"
         if "{" in create_sql or "}" in create_sql:
             raise ValueError("Invalid character in SQL (schema_config keys may contain braces)")
@@ -184,6 +193,8 @@ def write_index_to_sqlite(
             for k in data_keys:
                 v_display = get_display_value(r.get(k), r)
                 v, _u, _ru = _serialize_value(v_display, key=k, column_si_scale=column_si_scale)
+                if k in cat_set and v is not None and not isinstance(v, str):
+                    v = str(v)
                 vals.append(v)
             conn.execute(insert_sql, vals)
 

@@ -1,6 +1,6 @@
 # Proper Path and File names
 
-Konvention fuer Pfade und Dateinamen; der **DAMPF-Indexer** ([indexer.py](indexer.py)) ist darauf abgestimmt und erkennt die unten genannten Muster.
+Konvention fuer Pfade und Dateinamen; der **DAMPF-Indexer** ([../../app/dampf/indexer.py](../../app/dampf/indexer.py)) ist darauf abgestimmt und erkennt die unten genannten Muster.
 
 **Schnellueberblick:** [Naming_Cheat_Sheet.md](Naming_Cheat_Sheet.md) | **English:** [Proper_file_naming_EN.md](Proper_file_naming_EN.md)
 
@@ -71,13 +71,14 @@ Beides funktioniert; explizit ist immer eindeutig, implizit ist kuerzer.
 | Laenge/Abstand | nm, um, mm, cm, m, px | lengths |
 | Temperatur | c, °c, k | temp (val+unit) |
 | Datum | 2024-02-07, 20240207 | date |
+| Uhrzeit (HHMMSS) | 141710 neben Datum, oder allein wenn uhrplausibel | time (`14:17:10`); nicht frame. Letzte Dateiname-Zahl bleibt frame. |
+| `frame_<ch>_<n>` | frame_004_0000 | channel + frame |
 | Run/Rep/Trial | run1, rep2, trial3 | run, rep, trial |
 | Buchstabe(n)+Zahl (Parameter) | M25, S4, T250 | 1–3 Buchstaben + Zahl → key=value (z.B. m=25) |
 | Zahl+Buchstabe(n) (Parameter) | 300He, 300N2 | Zahl + 1–3 Zeichen → key=value; He/N2/CO2 = Gasanteil in % |
 | Durchfluss (slm) | 5slmAr, 10slmN2 | gas_flow (val, unit=slm, gas) |
 | Nur Buchstaben (2–4 Zeichen) | FF, KPSc | String-Parameter key=value (z.B. ff=ff) |
-| Laufnummer / Frame (nur Ziffern) | 000, 001, 040, 165 | frame (als Integer, 3+ Ziffern) |
-| Sequenz/Session (1–2 Ziffern) | 07 in 10mm_07 | seq (z.B. Session-Nr. bei identischen Werten) |
+| Laufnummer / Frame (nur Ziffern) | 000, 001, 040, 165, 07 | frame (als Integer; nackte Ziffern am Dateiende) |
 | Kamera/Channel | cam1, channel2, C1, C2, C3 | camera, channel |
 | key=value | beliebig | als Key-Value gespeichert |
 | Processing-Tags | raw, dark, flat, avg, … | processing (Liste) |
@@ -131,11 +132,11 @@ RUNNING NUMBERS are at the end. USE Leading Zeros.
 Um weitere Schreibweisen oder Einheiten zu unterstuetzen:
 
 1. **Neue Wert+Einheit (z.B. sccm, bar):**
-   - In [indexer.py](indexer.py): Einheit in `RE_NUMBER_UNIT` und in der passenden RE_*-Variable (`RE_LEN`, `RE_VOLT`, …) ergaenzen; ggf. neue RE_* und `unit_scale()` + Parsing in `parse_tokens()`.
+   - In [../../app/dampf/indexer.py](../../app/dampf/indexer.py): Einheit in `RE_NUMBER_UNIT` und in der passenden RE_*-Variable (`RE_LEN`, `RE_VOLT`, …) ergaenzen; ggf. neue RE_* und `unit_scale()` + Parsing in `parse_tokens()`.
    - Hier in **Vom DAMPF-Indexer erkannt** eintragen.
 
 2. **Neue Tags / Modality / Keys:**
-   - In [indexer.py](indexer.py): `MODALITY_MAP` oder `PROC_TAGS` erweitern, oder neues key=value-Pattern; ggf. neue Regex in `parse_tokens()`.
+   - In [../../app/dampf/indexer.py](../../app/dampf/indexer.py): `MODALITY_MAP` oder `PROC_TAGS` erweitern, oder neues key=value-Pattern; ggf. neue Regex in `parse_tokens()`.
    - Hier unter „Vom DAMPF-Indexer erkannt“ dokumentieren.
 
 3. **Projekt-spezifisch (ohne Code-Aenderung):**

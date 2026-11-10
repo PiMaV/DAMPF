@@ -22,7 +22,11 @@ from dampf.indexer import (
     write_jsonl,
 )
 from dampf.db_writer import default_db_path_for_root, write_index_to_sqlite, load_schema_from_db
-from dampf.outlier_detection import detect_schema_outliers, detect_typo_candidates
+from dampf.outlier_detection import (
+    DEFAULT_CONFIDENCE_THRESHOLD,
+    detect_schema_outliers,
+    detect_typo_candidates,
+)
 from dampf.key_lut import (
     build_key_tree,
     exponent_to_unit,
@@ -41,7 +45,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QIcon, QTextBlockFormat, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QGroupBox, QLabel, QLineEdit, QPushButton, QCheckBox, QSpinBox,
+    QGroupBox, QLabel, QLineEdit, QPushButton, QCheckBox, QSpinBox, QDoubleSpinBox,
     QComboBox, QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem, QTextEdit, QPlainTextEdit,
     QSplitter, QScrollArea, QFrame, QSizePolicy, QInputDialog, QMessageBox,
     QFileDialog, QProgressDialog, QMenu,
@@ -58,9 +62,6 @@ _KEY_COLORS_DARK = [
     "#d84315", "#5e35b1", "#00695c", "#f57f17", "#558b2f", "#ad1457", "#0277bd", "#7cb342",
     "#afb42b", "#e64a19", "#4527a0",
 ]
-
-# Default group suggestions (optional; empty = no group). User can add more; those are persisted in dampf.ini.
-DEFAULT_GROUP_CHOICES = ("", "Camera", "Run", "Source", "Experiment", "Modality")
 
 STYLESHEET_LIGHT = """
     QWidget { background-color: #e8eaed; color: #202124; }
@@ -164,14 +165,9 @@ def _schema_consistency(rows: list, keys: list) -> tuple[int, dict[str, int]]:
     return total, per_key
 
 
-def _filter_to_dominant_suffix(rows: list) -> list:
-    if len(rows) <= 1:
-        return rows
-    ext_counts = Counter(r.get("ext", "") for r in rows if r.get("ext"))
-    if not ext_counts:
-        return rows
-    dominant_ext = ext_counts.most_common(1)[0][0]
-    return [r for r in rows if r.get("ext") == dominant_ext] or rows
+def _fmt_count(n: int) -> str:
+    """Format integer counts for UI (apostrophe thousands, period unused here)."""
+    return f"{n:,}".replace(",", "'")
 
 
 def _build_pseudopath_from_rows(
@@ -535,10 +531,6 @@ class DampfGui(QMainWindow):
         self.current_config: dict = {}
         self.key_display_names: dict = {}
         self.key_categories: dict = {}
-        self.key_group_label: dict = {}
-        default_choices = list(DEFAULT_GROUP_CHOICES)
-        extra = [x for x in settings.get("group_choices", []) if x and x not in default_choices]
-        self.key_group_choices = default_choices + extra
         self.key_is_categorical: dict = {}
         self.key_si_scale: dict = {}
         self.key_is_used: dict = {}
@@ -654,7 +646,8 @@ class DampfGui(QMainWindow):
         ext_filter_row = QHBoxLayout()
         ext_filter_lbl = QLabel("Filter by type:")
         ext_filter_lbl.setToolTip(
-            "Unrecognized FILES = filtered out. Click to show .asc, .jpg, etc. Default = most common. No re-crawl."
+            "Crawl indexes every allowed type. This view defaults to the most common type so sidecars "
+            "do not flood step 4; click another button (e.g. .img) or All to switch. No re-crawl."
         )
         ext_filter_row.addWidget(ext_filter_lbl)
         self.ext_filter_buttons_w = QWidget()
@@ -718,7 +711,10 @@ class DampfGui(QMainWindow):
         # 4. Detected keys (title updated with file count)
         struct_g = QGroupBox("4. Detected keys (0 files)")
         self.struct_g = struct_g
-        struct_g.setToolTip("Parameters extracted from filenames. Check Used to include in export; set Cat for categorical; edit SI exp for unit scaling.")
+        struct_g.setToolTip(
+            "Parameters from filenames. Used = export column; Cat = store as TEXT for WOLKE filters; "
+            "Uniques/Full = coverage; SI exp scales units. Hover column headers for details."
+        )
         struct_g.setStyleSheet("QGroupBox { font-size: 12px; padding-top: 8px; }")
         struct_l = QVBoxLayout(struct_g)
 
@@ -743,14 +739,16 @@ class DampfGui(QMainWindow):
         self.schema_summary_label.setToolTip("Number of files. Per key: Full column = how many have the key, (−X) = how many are missing.")
         info_row.addWidget(self.schema_summary_label, 1)
         keys_top_ll.addLayout(info_row)
-        detected_keys_label = QLabel("Detected keys (double-click Display name to edit; Group optional, pick or type):")
+        detected_keys_label = QLabel("Detected keys (double-click Display name to edit):")
         detected_keys_label.setToolTip(
             "Parameters from filenames. Display name = label in exports (double-click to edit). Key = internal name (read-only). "
-            "Group = optional; choose from list or type a new label (available for all keys immediately)."
+            "Hover column headers for Used, Cat, Uniques, Full, and unit columns."
         )
         keys_top_ll.addWidget(detected_keys_label)
         self.key_tree = QTreeWidget()
-        self.key_tree.setHeaderLabels(["Used", "Cat", "Uniques", "Full", "Display name", "Key", "SI exp", "Unit", "Min", "Max", "Mean", "Group (optional)"])
+        self.key_tree.setHeaderLabels(
+            ["Used", "Cat", "Uniques", "Full", "Display name", "Key", "SI exp", "Unit", "Min", "Max", "Mean"]
+        )
         self.key_tree.setMinimumHeight(150)
         self.key_tree.setMaximumHeight(380)  # cap so layout stays stable; scroll when more keys
         self.key_tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -759,9 +757,25 @@ class DampfGui(QMainWindow):
         self.key_tree.setColumnWidth(4, 180)
         self.key_tree.setColumnWidth(5, 80)
         self.key_tree.setStyleSheet("font-size: 11px;")
+        _key_header_tips = [
+            "Include this key as a column in SQLite / CSV / JSONL. None checked: export all keys. One or more checked: only those.",
+            "Checked: write column as TEXT so WOLKE shows a filter (not a histogram). Default on when fewer than 10 distinct values. WOLKE sorts TEXT as text (1, 10, 2).",
+            "Number of distinct values in the current file set. Drives defaults: Used when >1, Cat when <10.",
+            "How many files have this key. (−N) = files missing it.",
+            "Label used in exports. Double-click to edit.",
+            "Internal key name (read-only).",
+            "SI exponent for unit scaling (e.g. -3 for milli). Clear to keep raw unit.",
+            "Unit after SI scaling, or raw unit from the filename.",
+            "Minimum numeric value (if any).",
+            "Maximum numeric value (if any).",
+            "Mean numeric value (if any).",
+        ]
+        header_item = self.key_tree.headerItem()
+        for col, tip in enumerate(_key_header_tips):
+            header_item.setToolTip(col, tip)
         self.key_tree.setToolTip(
-            "Used=include in export. Display name=label in exports (double-click to edit). Key=internal name (read-only). "
-            "Group (optional): pick or type a label (e.g. Camera, Source); leave empty if not needed. New labels are available for all keys immediately."
+            "Used = include in export. Cat = TEXT for WOLKE filters. Uniques / Full = coverage. "
+            "Hover a column header for details."
         )
         self.key_tree.itemSelectionChanged.connect(self._on_tree_select)
         self.key_tree.itemChanged.connect(self._on_key_tree_item_changed)
@@ -826,6 +840,24 @@ class DampfGui(QMainWindow):
             "Typo: rare name similar to a frequent one (e.g. MultFiLI -> MultFilI?)."
         )
         outlier_l = QVBoxLayout(outlier_g)
+        conf_row = QHBoxLayout()
+        conf_lbl = QLabel("Min confidence:")
+        conf_lbl.setToolTip(
+            "Flag paths whose recognition score is below this value (0–1). "
+            "Deep messy folders often land near 0.28; raise the threshold only if you want stricter checks, "
+            "or lower it (e.g. 0.25) to quiet borderline camera caches."
+        )
+        conf_row.addWidget(conf_lbl)
+        self.confidence_spin = QDoubleSpinBox()
+        self.confidence_spin.setRange(0.0, 1.0)
+        self.confidence_spin.setSingleStep(0.05)
+        self.confidence_spin.setDecimals(2)
+        self.confidence_spin.setValue(float(settings.get("confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD)))
+        self.confidence_spin.setToolTip(conf_lbl.toolTip())
+        self.confidence_spin.valueChanged.connect(self._on_confidence_threshold_changed)
+        conf_row.addWidget(self.confidence_spin)
+        conf_row.addStretch()
+        outlier_l.addLayout(conf_row)
         self.outlier_table = QTableWidget()
         self.outlier_table.setColumnCount(3)
         self.outlier_table.setHorizontalHeaderLabels(["Path", "Type", "Detail"])
@@ -1420,13 +1452,13 @@ class DampfGui(QMainWindow):
         total = sum(ext_counts.values())
         sorted_exts = ext_counts.most_common()
         for ext, cnt in sorted_exts:
-            btn = QPushButton(f"{ext} ({cnt:,})")
+            btn = QPushButton(f"{ext} ({_fmt_count(cnt)})")
             btn.setCheckable(True)
             btn.setChecked(ext == self._ext_filter)
             btn.setToolTip(f"Show only {ext} files")
             btn.clicked.connect(lambda checked=False, e=ext: self._on_ext_filter_clicked(e))
             self.ext_filter_buttons_l.addWidget(btn)
-        all_btn = QPushButton(f"All ({total:,})")
+        all_btn = QPushButton(f"All ({_fmt_count(total)})")
         all_btn.setCheckable(True)
         all_btn.setChecked(self._ext_filter is None)
         all_btn.setToolTip("Show all file types")
@@ -1550,9 +1582,9 @@ class DampfGui(QMainWindow):
         """Update group box title with file count; no duplicate count in row."""
         n = len(self._effective_rows)
         n_all = len(self.rows)
-        title = f"4. Detected keys ({n:,} files)"
+        title = f"4. Detected keys ({_fmt_count(n)} files)"
         if n_all != n and n_all:
-            title += f" (from {n_all:,} in folders)"
+            title += f" (from {_fmt_count(n_all)} in folders)"
         self.struct_g.setTitle(title)
         self.schema_summary_label.setText("")
 
@@ -1672,7 +1704,14 @@ class DampfGui(QMainWindow):
                     self._folder_includes = set()
                     self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), self._folder_includes)
                     n_shown = len(self.rows)
-                    msg = f"Done: {len(self._all_rows)} files indexed. Showing {n_shown} ({dominant or 'all'})."
+                    n_all = len(self._all_rows)
+                    if dominant and n_shown != n_all:
+                        msg = (
+                            f"Done: {_fmt_count(n_all)} files indexed. "
+                            f"Showing {_fmt_count(n_shown)} ({dominant}); other types are in the buttons above."
+                        )
+                    else:
+                        msg = f"Done: {_fmt_count(n_all)} files indexed. Showing {_fmt_count(n_shown)} ({dominant or 'all'})."
                     self.progress_label.setText(msg)
                     t0 = time.perf_counter()
                     self._populate_folder_tree(self._all_rows)
@@ -1725,6 +1764,14 @@ class DampfGui(QMainWindow):
         self._refresh_unrecognized_panel()
         self._refresh_outlier_panel()
 
+    def _on_confidence_threshold_changed(self, _value: float = 0.0) -> None:
+        """Recompute outlier list when the confidence spinner changes."""
+        if not getattr(self, "_effective_rows", None):
+            return
+        self._refresh_outlier_panel()
+        if getattr(self, "outlier_only_cb", None) and self.outlier_only_cb.isChecked():
+            self._refresh_path_overview()
+
     def _refresh_outlier_panel(self) -> None:
         """Fill outlier table from schema outliers and typo candidates; update _outlier_relpaths."""
         self._outlier_relpaths = set()
@@ -1733,7 +1780,12 @@ class DampfGui(QMainWindow):
         detected = getattr(self, "_last_detected_keys", None) or []
         if not rows:
             return
-        schema_outliers = detect_schema_outliers(rows, detected)
+        thr = (
+            float(self.confidence_spin.value())
+            if getattr(self, "confidence_spin", None) is not None
+            else DEFAULT_CONFIDENCE_THRESHOLD
+        )
+        schema_outliers = detect_schema_outliers(rows, detected, confidence_threshold=thr)
         typo_candidates = detect_typo_candidates(rows)
         table_rows: list[tuple[str, str, str]] = []
         for r, reason in schema_outliers:
@@ -1814,7 +1866,10 @@ class DampfGui(QMainWindow):
             uniq_str = str(u)
             default_used = u > 1
             is_used = self.key_is_used.get(key, default_used)
-            is_cat = self.key_is_categorical.get(key, u < 10)
+            self.key_is_used[key] = is_used
+            default_cat = u < 10
+            is_cat = self.key_is_categorical.get(key, default_cat)
+            self.key_is_categorical[key] = is_cat
             si_exp = self.key_si_scale.get(key)
             has_unit = get_unit_info(key) is not None
             base = SI_BASE_UNIT.get(key, "")
@@ -1827,8 +1882,9 @@ class DampfGui(QMainWindow):
                 unit_text = "-"
             exp_to_show = si_exp if si_exp is not None else (unit_to_exponent(raw_u) if raw_u and has_unit else None)
             si_text = str(exp_to_show) if exp_to_show is not None else ""
-            group_label = self.key_group_label.get(key, "")
-            item = QTreeWidgetItem(["", "", uniq_str, full_str, display_name, key, si_text, unit_text, min_str, max_str, mean_str, ""])
+            item = QTreeWidgetItem(
+                ["", "", uniq_str, full_str, display_name, key, si_text, unit_text, min_str, max_str, mean_str]
+            )
             item.setData(5, Qt.ItemDataRole.UserRole, key)
             item.setData(6, Qt.ItemDataRole.UserRole, has_unit)
             item.setData(7, Qt.ItemDataRole.UserRole, raw_u)
@@ -1839,14 +1895,6 @@ class DampfGui(QMainWindow):
             if bg:
                 item.setBackground(5, QBrush(QColor(bg)))
             self.key_tree.addTopLevelItem(item)
-            combo = QComboBox()
-            combo.setEditable(True)
-            combo.addItems(list(self.key_group_choices))
-            combo.setCurrentText(group_label)
-            combo.lineEdit().setPlaceholderText("optional")
-            combo.currentTextChanged.connect(lambda t, k=key: self._on_group_combo_changed(k, t))
-            combo.lineEdit().editingFinished.connect(lambda k=key, c=combo: self._on_group_editing_finished(k, c))
-            self.key_tree.setItemWidget(item, 11, combo)
         self.key_tree.blockSignals(False)
         for c in range(self.key_tree.columnCount()):
             self.key_tree.resizeColumnToContents(c)
@@ -1880,22 +1928,6 @@ class DampfGui(QMainWindow):
                     item.setText(7, exponent_to_unit(base, exp))
                 except ValueError:
                     pass
-
-    def _on_group_combo_changed(self, key: str, text: str) -> None:
-        """Update key group label only (no add to choices here; that happens on editingFinished)."""
-        self.key_group_label[key] = text.strip()
-
-    def _on_group_editing_finished(self, key: str, combo: QComboBox) -> None:
-        """When user finishes editing the Group field: add final value to choices if new, and to all combos."""
-        t = combo.currentText().strip()
-        self.key_group_label[key] = t
-        if t and t not in self.key_group_choices:
-            self.key_group_choices.append(t)
-            for i in range(self.key_tree.topLevelItemCount()):
-                it = self.key_tree.topLevelItem(i)
-                w = self.key_tree.itemWidget(it, 11)
-                if isinstance(w, QComboBox) and w.findText(t) == -1:
-                    w.addItem(t)
 
     def _on_tree_select(self) -> None:
         items = self.key_tree.selectedItems()
@@ -1962,6 +1994,16 @@ class DampfGui(QMainWindow):
             if key and item.checkState(0) == Qt.CheckState.Checked:
                 out.append(key)
         return out if out else None
+
+    def _get_categorical_keys(self) -> list:
+        """Return keys checked Cat (TEXT for WOLKE filters). Defaults seeded in _refresh_key_tree."""
+        out: list = []
+        for i in range(self.key_tree.topLevelItemCount()):
+            item = self.key_tree.topLevelItem(i)
+            key = item.data(5, Qt.ItemDataRole.UserRole)
+            if key and item.checkState(1) == Qt.CheckState.Checked:
+                out.append(key)
+        return out
 
     def _refresh_unrecognized_panel(self) -> None:
         """Populate unrecognized token combo and mappings list."""
@@ -2208,16 +2250,12 @@ class DampfGui(QMainWindow):
         if isinstance(schema.get("key_categories"), dict):
             self.key_categories = dict(schema["key_categories"])
             loaded.append("categories")
-        if isinstance(schema.get("key_group_label"), dict):
-            self.key_group_label = dict(schema["key_group_label"])
-            loaded.append("group labels")
-        if isinstance(schema.get("key_group_choices"), list):
-            base = list(DEFAULT_GROUP_CHOICES)
-            extra = [x for x in schema["key_group_choices"] if x and x not in base]
-            self.key_group_choices = base + extra
-        for v in self.key_group_label.values():
-            if v and v not in self.key_group_choices:
-                self.key_group_choices.append(v)
+        if isinstance(schema.get("key_is_categorical"), dict):
+            self.key_is_categorical = {k: bool(v) for k, v in schema["key_is_categorical"].items()}
+            loaded.append("categorical flags")
+        if isinstance(schema.get("key_is_used"), dict):
+            self.key_is_used = {k: bool(v) for k, v in schema["key_is_used"].items()}
+            loaded.append("used flags")
         ctm = schema.get("custom_token_map")
         if isinstance(ctm, dict):
             for tok, key in list(self.custom_token_map.items()):
@@ -2266,6 +2304,7 @@ class DampfGui(QMainWindow):
             self.db_edit.setText(db_path)
         config = self._get_config()
         used_keys = self._get_used_keys()
+        categorical_keys = self._get_categorical_keys()
         column_si_scale = {k: v for k, v in (getattr(self, "key_si_scale", {}) or {}).items() if v is not None}
         # output_dir must be under root; else use root/_index and fix GUI
         out_raw = self.output_edit.text().strip()
@@ -2296,14 +2335,19 @@ class DampfGui(QMainWindow):
                   "recursive": config["recursive"], "include_hidden": config["include_hidden"],
                   "column_si_scale": column_si_scale,
                   "key_display_names": key_display_names_export, "key_categories": self.key_categories,
-                  "key_group_label": dict(self.key_group_label),
-                  "key_group_choices": list(self.key_group_choices),
                   "key_is_categorical": dict(self.key_is_categorical), "key_is_used": dict(self.key_is_used),
                   "custom_token_map": dict(self.custom_token_map),
                   "token_patterns": list(getattr(self, "token_patterns", []) or [])}
         try:
             t0 = time.perf_counter()
-            write_index_to_sqlite(self._effective_rows, {}, db_path, schema_config=schema, used_keys=used_keys)
+            write_index_to_sqlite(
+                self._effective_rows,
+                {},
+                db_path,
+                schema_config=schema,
+                used_keys=used_keys,
+                categorical_keys=categorical_keys,
+            )
             dt = time.perf_counter() - t0
             self.log_widget.appendPlainText(f"[save_db] {dt:.3f}s | {len(self._effective_rows)} rows -> {db_path}")
             QMessageBox.information(self, "DB", f"Saved: {db_path}")
@@ -2342,6 +2386,11 @@ class DampfGui(QMainWindow):
         outer_splitter_sizes = ""
         if getattr(self, "outer_split", None):
             outer_splitter_sizes = ",".join(str(s) for s in self.outer_split.sizes())
+        thr = (
+            float(self.confidence_spin.value())
+            if getattr(self, "confidence_spin", None) is not None
+            else DEFAULT_CONFIDENCE_THRESHOLD
+        )
         save_settings(
             self.size().width(), self.size().height(),
             self.root_edit.text(), self.output_edit.text(), self.db_edit.text(),
@@ -2349,7 +2398,7 @@ class DampfGui(QMainWindow):
             splitter_sizes=splitter_sizes,
             main_splitter_sizes=main_splitter_sizes,
             outer_splitter_sizes=outer_splitter_sizes,
-            group_choices=[c for c in getattr(self, "key_group_choices", []) if c and c not in DEFAULT_GROUP_CHOICES],
+            confidence_threshold=thr,
         )
         event.accept()
 

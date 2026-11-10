@@ -34,6 +34,7 @@ One-page quick reference. Full docs: [Proper_file_naming_EN.md](Proper_file_nami
 | c, k | temp | hz, khz, mhz | freq |
 | 2024-02-07 | date | run1, rep2 | run, rep |
 | 000, 001 | frame | cam1, C1 | camera, channel |
+| 141710 | time | frame_004_0000 | channel+frame |
 | M25, S4 | param | key=value | explicit |
 
 ---
@@ -56,6 +57,11 @@ Use explicit for custom params: `sample=ABC123`, `temp=22p5`
 Exception: `.` in numbers like `4.2kv` is OK. No umlauts – use ASCII (oe, ae, ue).
 
 ---
+
+## Crawl suffixes
+
+Default allowlist: `.png` `.jpg` `.jpeg` `.tif` `.tiff` `.bmp` `.img` `.csv` `.tsv` `.txt` `.dat` `.asc` `.npy` `.npz` `.h5` `.hdf5` `.json` `.yaml` `.yml`.  
+`.img` is path indexing only (WOLKE/BLITZ cannot open it).
 
 ## Best Practice
 

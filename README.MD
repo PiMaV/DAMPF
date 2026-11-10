@@ -59,7 +59,7 @@ Semantic information such as date, run number, temperature, exposure time, camer
 The resulting dataset can be explored and analyzed by other tools in the WETTER ecosystem.
 
 **Typical use cases:**
-- Scientific image data (PNG, TIFF, JPG)
+- Scientific image data (PNG, TIFF, JPG, IMG for path indexing)
 - NumPy arrays (NPY, NPZ)
 - CSV/text measurement data
 - HDF5 files
@@ -115,7 +115,7 @@ Step 5 details match the **Output** section below (defaults, tables, column layo
 
 ## Configuration
 
-The GUI still reads and writes `dampf.ini` next to the executable (frozen) or in the current working directory (dev). A reference copy of the default layout is in [`config/dampf.ini`](config/dampf.ini).
+The GUI reads and writes a local `dampf.ini` next to the executable (frozen) or in the current working directory (dev). That file holds window size and last-used paths and is **not** part of the release — do not commit machine paths. The portable template with empty paths is [`config/dampf.ini`](config/dampf.ini).
 
 **CLI:**
 Adjust in `app/dampf/filename_semantic_indexer.py`:
@@ -142,6 +142,14 @@ Adjust in `app/dampf/filename_semantic_indexer.py`:
 
 * **Workflow:**
   Root folder → Crawl → Adjust nomenclature → Save schema → **Save to DB** (primary) → optional **Export JSONL/CSV** to `_index` (or chosen output folder)
+
+* **Step 4 — Detected keys:**
+
+  * **Used** — which keys become columns in the SQLite / CSV / JSONL export. If none are checked, every key is exported; if any are checked, only those are.
+  * **Cat** — store that column as TEXT so WOLKE shows a filter instead of a histogram. Default on when a key has fewer than 10 distinct values. WOLKE sorts TEXT values as text (`1`, `10`, `2`).
+  * **Uniques** — how many distinct values appear in the current file set (drives the Used / Cat defaults).
+  * **Full** — how many files have the key; `(−N)` means N files are missing it.
+  * Hover a column header for the short tooltip.
 
 * **Schema handling:**
   Save as `project.json` / `project.ini`

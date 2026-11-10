@@ -7,8 +7,5 @@ links in GUI ? auf mess und wetter?
 Generell:
 Soll später in wolke der key oder der display name genutzt werden? dann müssen wir das sauber in DAMPF darstellen!
 
-group keys sind nicht klar; das ist eher verwirrend
-
 
 wir brauchen dringend die möglichkeit für den nutzer selbst was anzulegen; das ziel sollte sein, kein grau mehr zu haben
-

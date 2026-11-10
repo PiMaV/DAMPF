@@ -83,6 +83,7 @@ SI_BASE_UNIT: Dict[str, str] = {
 # Key -> category label (for tree grouping). User can extend via project.json "key_categories".
 DEFAULT_KEY_CATEGORIES: Dict[str, str] = {
     "date": "Date",
+    "time": "Time",
     "run": "Run",
     "rep": "Repetition",
     "trial": "Trial",
@@ -127,6 +128,9 @@ DEFAULT_KEY_DISPLAY_NAMES: Dict[str, str] = {
     "frame": "Frame",
     "seq": "Sequence",
     "date": "Date",
+    "time": "Time",
+    "channel": "Channel",
+    "camera": "Camera",
     "run": "Run",
     "rep": "Rep",
     "sample": "Sample",

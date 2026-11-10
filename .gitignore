@@ -22,3 +22,6 @@ htmlcov/
 .vscode/
 *.swp
 Thumbs.db
+
+# Local GUI settings (paths, window size) — never ship; template is config/dampf.ini
+/dampf.ini

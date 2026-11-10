@@ -47,6 +47,13 @@ def test_detect_schema_outliers_no_outliers():
     assert len(result) == 0
 
 
+def test_detect_schema_outliers_threshold_spinner_effect():
+    """Borderline 0.28 is an outlier at 0.3 but not at 0.25."""
+    rows = [_row("cache/frame_001_0000.img", 0.28, date="2025-03-17", frame=0)]
+    assert len(detect_schema_outliers(rows, detected_keys=[], confidence_threshold=0.3)) == 1
+    assert len(detect_schema_outliers(rows, detected_keys=[], confidence_threshold=0.25)) == 0
+
+
 def test_detect_typo_candidates_empty():
     assert detect_typo_candidates([]) == []
 
