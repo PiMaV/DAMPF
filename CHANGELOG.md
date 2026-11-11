@@ -9,15 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Compact `YYYYMMDDHHMMSS` tokens (and glued prefixes like `IMG20220601093439`) map to `date` + `time`.
-
 ### Changed
 
 ### Fixed
 
 ### Removed
 
-## [1.1.0] - 2026-11-10
+## [1.1.0] - 2026-11-11
 
 ### Added
 
@@ -25,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-column header tooltips on step 4 (Used, Cat, Uniques, Full, and the remaining key columns).
 - `.img` is included in the default crawl suffix list (path indexing only; WOLKE/BLITZ still cannot open the format).
 - Outlier panel **Min confidence** spinner (default 0.3, stored in `dampf.ini`) so borderline deep-path caches can be quieted without a re-crawl.
+- Compact `YYYYMMDDHHMMSS` tokens (and glued prefixes like `IMG20220601093439`) map to `date` + `time`.
 
 ### Changed
 
