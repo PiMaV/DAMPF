@@ -215,7 +215,9 @@ def _safe_identifier(name: str, default: str) -> str:
     """Alphanumeric and underscore only; else default. Prevents token errors (e.g. '{' in names)."""
     if not name or not isinstance(name, str):
         return default
-    s = "".join(c for c in name if c.isalnum() or c == "_")
+    # '-' binds a name in filenames; an unquoted SQL name cannot contain it.
+    s = name.replace("-", "_")
+    s = "".join(c for c in s if c.isalnum() or c == "_")
     return s if s else default
 
 

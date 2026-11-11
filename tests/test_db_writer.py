@@ -62,3 +62,25 @@ def test_categorical_key_forced_text(tmp_path: Path) -> None:
     assert frame_type == "integer"
     assert isinstance(frame_val, int)
     assert frame_val == 10
+
+
+def test_hyphen_in_column_name_becomes_underscore(tmp_path: Path) -> None:
+    """A bound name uses '-' in the file. SQL cannot, so the column uses '_'."""
+    root = tmp_path / "ds"
+    root.mkdir()
+    f1 = root / "a.png"
+    f1.write_bytes(b"x")
+    rows = [{"path": str(f1), "relpath": "a.png", "target-material": "glass"}]
+    db_path = root / "ds.db"
+    write_index_to_sqlite(rows, {}, db_path, categorical_keys=["target-material"])
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(data)").fetchall()]
+        val = conn.execute("SELECT target_material FROM data").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert "target_material" in cols
+    assert "target-material" not in cols
+    assert val == "glass"

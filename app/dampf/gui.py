@@ -39,7 +39,7 @@ from dampf.key_lut import (
     SI_BASE_UNIT,
     unit_to_exponent,
 )
-from dampf.app_settings import load_settings, save_settings
+from dampf.app_settings import load_settings, save_settings, stored_path_for_this_os
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QIcon, QTextBlockFormat, QTextCharFormat, QTextCursor
@@ -1120,9 +1120,9 @@ class DampfGui(QMainWindow):
 
     def _set_root(self, path: str) -> None:
         self.root_edit.setText(path)
-        if not self.output_edit.text().strip():
+        if not stored_path_for_this_os(self.output_edit.text()):
             self.output_edit.setText(str(Path(path) / "_index"))
-        if not self.db_edit.text().strip():
+        if not stored_path_for_this_os(self.db_edit.text()):
             self.db_edit.setText(str(default_db_path_for_root(path)))
 
     def _toggle_advanced(self, on: bool) -> None:
@@ -1703,7 +1703,7 @@ class DampfGui(QMainWindow):
 
     def _start_crawl(self) -> None:
         root_dir = self.root_edit.text().strip()
-        output_dir = self.output_edit.text().strip()
+        output_dir = stored_path_for_this_os(self.output_edit.text())
         if not root_dir:
             QMessageBox.warning(self, "Root required", "Please select a root folder first.")
             return
@@ -2432,7 +2432,8 @@ class DampfGui(QMainWindow):
         if not self._effective_rows:
             QMessageBox.warning(self, "No data", "Run a crawl first.")
             return
-        out_dir = self.output_edit.text().strip() or str(Path(self.root_edit.text()) / "_index")
+        out_dir = stored_path_for_this_os(self.output_edit.text()) or str(Path(self.root_edit.text()) / "_index")
+        self.output_edit.setText(out_dir)
         out_path = Path(out_dir)
         out_path.mkdir(parents=True, exist_ok=True)
         used_keys = self._get_used_keys()

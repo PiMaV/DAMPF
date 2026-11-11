@@ -231,6 +231,29 @@ def test_img_compact_datetime_file_indexed():
         assert "frame" not in rows[0] or rows[0].get("frame") is None
 
 
+def test_run_indexer_does_not_create_output_dir():
+    """Crawl must not mkdir output_dir. A Windows path is one filename on Linux."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        base = Path(d)
+        root = base / "data"
+        root.mkdir()
+        (root / "2024-01-15_run1_500us.tif").touch()
+        cwd = base / "cwd"
+        cwd.mkdir()
+        old = os.getcwd()
+        os.chdir(cwd)
+        try:
+            weird = "C:\\DATEN\\KPs\\Measuremement_New_Schema\\_index"
+            rows, _ = run_indexer(root, weird)
+        finally:
+            os.chdir(old)
+        assert len(rows) == 1
+        assert list(cwd.iterdir()) == []
+        assert not (root / "_index").exists()
+
+
 def test_run_indexer_sequential():
     """run_indexer with few files uses sequential path."""
     import tempfile
@@ -453,6 +476,24 @@ def test_hyphenated_name_is_not_extra_keys():
     kv = parse_tokens(tokenize_string("plasma=on_target=metal-grounded"))
     assert kv.data["plasma"] == "on"
     assert kv.data["target"] == "metal-grounded"
+    long_key = "a" * 18 + "=glass"
+    assert parse_tokens(tokenize_string(long_key)).data["a" * 18] == "glass"
+    named = parse_tokens(tokenize_string("voltage=4kV_exposure=10us_temp=22p5"))
+    assert named.data["voltage"] == {"val": 4.0, "unit": "kv"}
+    assert named.data["exposure"] == {"val": 10.0, "unit": "us"}
+    assert named.data["temp"] == 22.5
+    bare_decimal = parse_tokens(tokenize_string("22p5"))
+    assert "p5" not in bare_decimal.data
+    assert bare_decimal.data == {}
+    assert "frame" not in named.data
+    gate = parse_tokens(tokenize_string("gate=10us"))
+    assert gate.data["gate"] == {"val": 10.0, "unit": "us"}
+    assert "us" not in gate.data
+    assert parse_tokens(tokenize_string("c-set=001")).data["c-set"] == 1
+    assert parse_tokens(tokenize_string("target-material=glass")).data["target-material"] == "glass"
+    split_value = parse_tokens(tokenize_string("target=metal_grounded"))
+    assert split_value.data.get("target") == "metal"
+    assert "grounded" not in split_value.data or split_value.data.get("target") != "metal_grounded"
 
     canonical = parse_tokens(tokenize_string("2024-02-07_run1_4kV_10us_001"))
     assert canonical.data["date"] == "2024-02-07"

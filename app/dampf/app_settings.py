@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import configparser
+import os
+import re
 import sys
 from pathlib import Path
+
+# Windows drive path, e.g. C:\DATEN\... or C:/DATEN/...
+_WIN_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def _get_settings_path() -> Path:
@@ -31,6 +36,20 @@ root_dir =
 output_dir =
 db_path =
 """.strip()
+
+
+def stored_path_for_this_os(path: str) -> str:
+    """Keep a persisted path only when this OS can use it as a real path.
+
+    On Linux a saved Windows path is one filename (backslashes are not
+    separators). Returning it unchanged makes mkdir create that name in cwd.
+    """
+    text = (path or "").strip().strip('"')
+    if not text:
+        return ""
+    if os.name != "nt" and ("\\" in text or _WIN_DRIVE.match(text)):
+        return ""
+    return text
 
 
 def load_settings() -> dict:
@@ -81,7 +100,7 @@ def load_settings() -> dict:
         if cfg.has_section("paths"):
             for k in ("root_dir", "output_dir", "db_path"):
                 if k in cfg["paths"]:
-                    out[k] = cfg["paths"][k].strip()
+                    out[k] = stored_path_for_this_os(cfg["paths"][k])
     except (configparser.Error, OSError):
         pass
     return out
@@ -119,9 +138,9 @@ def save_settings(
         dampf["outer_splitter_sizes"] = outer_splitter_sizes
     cfg["dampf"] = dampf
     cfg["paths"] = {
-        "root_dir": root_dir or "",
-        "output_dir": output_dir or "",
-        "db_path": db_path or "",
+        "root_dir": stored_path_for_this_os(root_dir),
+        "output_dir": stored_path_for_this_os(output_dir),
+        "db_path": stored_path_for_this_os(db_path),
     }
     try:
         with p.open("w", encoding="utf-8") as f:

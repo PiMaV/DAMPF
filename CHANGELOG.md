@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Docs pared to README, English naming convention + cheat sheet, and `docs/llm-brief.md`; planning essays and duplicate runbooks removed.
 - GitHub Release binaries use branded, versioned names: `DAMPF-vX.Y.Z.exe` (Windows) and `DAMPF-vX.Y.Z-linux-x86_64` (glibc/x86_64; built on Ubuntu).
-- Naming docs (English + cheat sheet) state the three characters: `_` separates, `-` stays in the name, `=` names the column. WOLKE sees the SQLite name, with `-` written as `_`.
+- Naming docs state when `-` is only a name and when `=` is one shared column: `plasma=on` / `plasma=off` filter as text, `temp=22p5` / `temp=18` / `temp=30` sort as numbers. WOLKE sees the SQLite name, with `-` written as `_`.
 
 ### Fixed
 

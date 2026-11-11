@@ -73,7 +73,9 @@ RE_LEN = re.compile(
     r"^(?:x|y|z|d|dist|distance|meas|measurement|px|um|µm|mm|nm)?"
     r"(?P<val>[-+]?\d+(?:[p.]\d+)?)(?P<unit>nm|um|µm|mm|cm|m|px)$"
 )
-RE_KV = re.compile(r"^(?P<k>[a-zA-Z][a-zA-Z0-9]{0,16})=(?P<v>.+)$")
+# name=value inside one parameter. The name may contain '-' (it binds a name).
+# No length cap: '_' already ended the parameter, and the path limit covers the rest.
+RE_KV = re.compile(r"^(?P<k>[a-zA-Z][a-zA-Z0-9]*(?:-[a-zA-Z0-9]+)*)=(?P<v>.+)$")
 
 # One token = number (optional p decimal) + unit; keep as single token so parser sees e.g. 4p2kv, 500us
 RE_NUMBER_UNIT = re.compile(
@@ -154,7 +156,9 @@ def tokenize_string(
     out: List[str] = []
     for p in raw:
         pl = p.replace("µ", "u").lower()
-        if "-" in pl:
+        # '=' is one parameter (voltage=4kv). '-' is one name (plasma-on, 2024-02-07).
+        # Do not split either on letter/digit boundaries.
+        if "=" in pl or "-" in pl:
             out.append(pl)
             norm_to_orig.setdefault(pl, p)
         elif RE_NUMBER_UNIT.match(pl):
@@ -374,7 +378,8 @@ def _quantitative_from_piece(piece: str) -> Optional[Tuple[str, Any, str]]:
         if val is not None:
             return "gas_flow", {"val": val, "unit": "slm", "gas": m.group(2)}, "gas_flow"
     m = RE_NUM_LETTERS.match(piece)
-    if m:
+    # 22p5 is the decimal 22.5. Do not read the 'p' as a letter suffix (key p5).
+    if m and not re.fullmatch(r"\d+p\d+", piece):
         num_part, letters = m.group(1), m.group(2).lower()
         val = parse_number(num_part)
         if val is not None:
@@ -382,6 +387,21 @@ def _quantitative_from_piece(piece: str) -> Optional[Tuple[str, Any, str]]:
                 return letters, {"val": int(val) if val == int(val) else val, "unit": "%"}, "gas_pct"
             return letters, int(val) if val == int(val) else val, "num_letters"
     return None
+
+
+def _plain_number(v: str) -> Any:
+    """Bare number (22, 22p5, 1e-6). Not a number+unit."""
+    if not re.fullmatch(r"[-+]?\d+(?:p\d+)?(?:e[-+]?\d+)?", v):
+        return None
+    sign = -1 if v.startswith("-") else 1
+    body = v[1:] if v[:1] in "+-" else v
+    n = parse_number(body)
+    if n is None:
+        return None
+    n *= sign
+    if n == int(n) and "e" not in v and "p" not in v:
+        return int(n)
+    return n
 
 
 def parse_tokens(
@@ -452,11 +472,13 @@ def parse_tokens(
         m = RE_KV.match(tok)
         if m:
             k, v = m.group("k").lower(), m.group("v").lower()
-            if k not in data:
-                data[k] = v
-                trace.append(f"{k}:kv")
-                recognized += 1
-                token_to_key[tok] = k
+            hit = _quantitative_from_piece(v)
+            if hit is not None:
+                _inferred, val, _why = hit
+                set_field(k, val, "kv", tok)
+            else:
+                num = _plain_number(v)
+                set_field(k, num if num is not None else v, "kv", tok)
             continue
         m = RE_RUN.match(tok)
         if m:
@@ -615,7 +637,7 @@ def parse_tokens(
                     data["lengths"].append(entry)
             continue
         m = RE_NUM_LETTERS.match(tok)
-        if m and not _hyphen_binds_name(tok):
+        if m and not _hyphen_binds_name(tok) and not re.fullmatch(r"\d+p\d+", tok):
             num_part, letters = m.group(1), m.group(2).lower()
             val = parse_number(num_part)
             if val is not None:
@@ -888,12 +910,14 @@ def run_indexer(
     parallel_threshold (int, default 100: min files to use multicore),
     parallel_max_workers (int, default cpu_count-1),
     log_callback (callable[str] for timing/log messages).
+    output_dir is accepted for existing callers and ignored. Crawl only reads
+    root_dir; it does not create or write the output folder. Export creates
+    that folder when it writes JSONL/CSV.
     Returns (rows, {}). Second value is empty dict for backward compatibility.
     """
+    _ = output_dir  # callers still pass it; crawl must not create the folder
     cfg = config or {}
     root = Path(root_dir).expanduser().resolve()
-    out_dir = Path(output_dir).expanduser().resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     allowed = cfg.get("allowed_suffixes")
     if allowed is not None and not isinstance(allowed, set):
