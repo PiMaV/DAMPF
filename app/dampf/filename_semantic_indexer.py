@@ -3,9 +3,9 @@
 
 from pathlib import Path
 
+from dampf.app_settings import load_naming_rules
 from dampf.indexer import (
     DEFAULT_ALLOWED_SUFFIXES,
-    DEFAULT_MODALITY_MAP,
     DEFAULT_STOPWORDS,
     run_indexer,
     write_csv,
@@ -23,17 +23,19 @@ INCLUDE_HIDDEN = False
 FOLDER_TOKEN_DEPTH = 99
 ALLOWED_SUFFIXES = DEFAULT_ALLOWED_SUFFIXES
 STOPWORDS = DEFAULT_STOPWORDS
-MODALITY_MAP = DEFAULT_MODALITY_MAP
 
 
 def main() -> None:
+    rules = load_naming_rules()
     config = {
         "allowed_suffixes": ALLOWED_SUFFIXES,
         "folder_token_depth": FOLDER_TOKEN_DEPTH,
         "recursive": RECURSIVE,
         "include_hidden": INCLUDE_HIDDEN,
         "stopwords": STOPWORDS,
-        "modality_map": MODALITY_MAP,
+        "unit_map": rules["units"],
+        "modality_map": rules["modality"],
+        "processing_tags": rules["processing"],
     }
     rows, _ = run_indexer(ROOT_DIR, OUTPUT_DIR, config)
 

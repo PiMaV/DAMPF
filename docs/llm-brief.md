@@ -17,14 +17,17 @@ Product stance: local single-user GUI + optional CLI indexer script. Determinist
 - GUI entry: `uv run dampf` / `python -m dampf.gui` (package under `app/dampf`, `pythonpath = ["app"]` in pytest) / release binary `DAMPF-vX.Y.Z.exe` or `DAMPF-vX.Y.Z-linux-x86_64`.
 - Default DB path: `<crawl_root>/<root_folder_name>.db` via `default_db_path_for_root` in `db_writer.py`.
 - Default ASCII export folder: `root/_index` (`index.jsonl`, `index.csv`, `index_meta.json`).
-- Local UI state in `dampf.ini` next to the executable (frozen) or CWD (dev); gitignored. Template: `config/dampf.ini` with empty paths.
+- Local UI state in `dampf.ini` next to the executable (frozen) or CWD (dev); gitignored. Template: `config/dampf.ini`. Window, paths, and the naming rubrics (units, modality, processing). Each rubric has a `*.predefined` block (rewritten from `naming_rules.py` on save) and a `*.user` block (what the crawl uses; the user may delete rows).
 - Schema save/load: `project.json` / `project.ini` and Load schema from DB (`schema_io.py`, `load_schema_from_db`).
 - Step 4: **Used** selects export columns; **Cat** forces TEXT for WOLKE filters (default when fewer than 10 distinct values).
-- Naming contract: [naming/Proper_file_naming_EN.md](naming/Proper_file_naming_EN.md), quick ref [naming/Naming_Cheat_Sheet.md](naming/Naming_Cheat_Sheet.md). `_` separates parameters, `-` is one name and not a column, `=` is one column shared by every file (`plasma=on` / `plasma=off`, `temp=22p5` / `temp=18`). Text columns are WOLKE filters. Number columns sort. A `-` in a column name is `_` in SQLite.
+- **How to name…** shows [naming/cheat_sheet_v2.md](naming/cheat_sheet_v2.md) and [naming/file_names_explained_v2.md](naming/file_names_explained_v2.md). Those files are bundled in the release binary (`docs/naming/` next to the icon). Do not keep a second copy of the rules in the GUI source. Three character rules stay in the indexer: `_` separates, `-` glues a name, `=` defines name and value.
 
 ## Don't
 
 - Do not put Python / uv / PyInstaller install paths on the README front page.
+- Do not call `=` a column in the human naming pages. The words there are number and category. The pages are three short rules (`_` separates, `-` glues, `=` defines) plus examples.
+- Do not treat a 2–4 letter token as its own column. That heuristic is removed. A word becomes a category through `name=value`, or through a user-block row.
+- Do not hardcode unit, modality, or processing lists in the indexer. They live in `dampf.ini` (`naming_rules.py` is only the shipped predefined block).
 - Do not revive Group Keys / `groups.json` / per-key Group column (removed in 1.1.0).
 - Do not treat plain digit tokens as `seq` in docs; user-facing convention is `frame` (internal reassignment may still normalize minority `seq` → `frame`).
 - Do not invent a learning / ML fallback as the product path; Advanced tools stay optional and folded.
@@ -48,6 +51,8 @@ Built-in regex rules → user **`token_patterns`** (regex → key) → exact **`
 `token_patterns` entry shape: `{"key", "regex", "extract", "priority"}`. Extract types: `int`, `str`, `val_unit`, `date_short_YY`, `date_short_DM`. Short dates like `22_01_26` are only via a user pattern (YY vs DM).
 
 Outliers: schema deviation / typo candidates in Results; Min confidence spinner (default 0.3) in `dampf.ini`.
+
+A new unit (for example `sccm`) is a parser change in `indexer.py` (`RE_NUMBER_UNIT`, the matching `RE_*`, `unit_scale()`, `parse_tokens()`), not a fourth naming rule.
 
 ## Key paths
 
@@ -77,7 +82,7 @@ uv run python scripts/build_exe.py
 
 → `dist/DAMPF.exe` (Windows) or `dist/DAMPF` (Linux). Icons from `icon/`.
 
-Release: `pyproject.toml` `version` must match the tag. Push tag `vX.Y.Z` (example shape `v1.1.0`) on the commit that has that version → Actions **Release** publishes `DAMPF-vX.Y.Z.exe` and `DAMPF-vX.Y.Z-linux-x86_64`. Push to `main` alone runs CI only.
+Release: `pyproject.toml` `version` must match the tag. Push tag `vX.Y.Z` (current `v1.2.0`) on the commit that has that version → Actions **Release** publishes `DAMPF-vX.Y.Z.exe` and `DAMPF-vX.Y.Z-linux-x86_64`. Push to `main` alone runs CI only.
 
 Linux runtime needs usual Qt/X11 libs for PyQt6 (`libxcb-cursor0`, `libxkbcommon-x11-0`, `libegl1`, `libgl1`, …).
 

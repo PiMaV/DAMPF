@@ -107,7 +107,6 @@ DEFAULT_KEY_CATEGORIES: Dict[str, str] = {
     "sample": "Sample",
     "seq": "Sequence",
     "m": "Measurement",
-    "ff": "Parameter",
 }
 
 # Key -> suggested display name. User can override in GUI / project.json "key_display_names".
@@ -124,7 +123,6 @@ DEFAULT_KEY_DISPLAY_NAMES: Dict[str, str] = {
     "co2": "CO2 (%)",
     "gas_flow": "Gas flow (slm)",
     "m": "Measurement",
-    "ff": "FF",
     "frame": "Frame",
     "seq": "Sequence",
     "date": "Date",

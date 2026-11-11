@@ -39,7 +39,9 @@ from dampf.key_lut import (
     SI_BASE_UNIT,
     unit_to_exponent,
 )
-from dampf.app_settings import load_settings, save_settings, stored_path_for_this_os
+from dampf.app_settings import ensure_naming_rules, load_naming_rules, load_settings, save_naming_rules, save_settings, stored_path_for_this_os
+from dampf.naming_docs import CHEAT_SHEET, FULL, load_naming_doc
+from dampf.naming_rules import PREDEFINED_MODALITY, PREDEFINED_PROCESSING, PREDEFINED_UNITS
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QIcon, QTextBlockFormat, QTextCharFormat, QTextCursor
@@ -48,7 +50,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QLabel, QLineEdit, QPushButton, QCheckBox, QSpinBox, QDoubleSpinBox,
     QComboBox, QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem, QTextEdit, QPlainTextEdit,
     QSplitter, QScrollArea, QFrame, QSizePolicy, QInputDialog, QMessageBox,
-    QFileDialog, QProgressDialog, QMenu,
+    QFileDialog, QProgressDialog, QMenu, QDialog, QTabWidget, QDialogButtonBox, QTextBrowser,
 )
 
 # At least 20 distinct colors – no duplicates for different parameters
@@ -403,7 +405,7 @@ def _token_to_pattern(mapped_token: str) -> str | None:
     # Letters only, len>=4: synck, syncaa -> ^sync[a-z]*$
     if len(t) >= 4 and t.isalpha():
         return f"^{re.escape(t[:4])}[a-z]*$"
-    # Letters only, len 2-3: ff, sf -> exact only, no pattern (too broad)
+    # Short alphabetic token: exact match only. A prefix pattern would be too broad.
     return None
 
 
@@ -525,6 +527,125 @@ def _icon_path() -> Path:
     return base / "icon" / "icon.ico"
 
 
+class NamingRulesDialog(QDialog):
+    """Edit the user blocks for units, modality, and processing. Predefined stays read-only."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Naming rules")
+        self.resize(640, 520)
+        rules = load_naming_rules()
+        layout = QVBoxLayout(self)
+        note = QLabel(
+            "The crawl uses the user block. The predefined block is the shipped list "
+            "and is written back into dampf.ini on save. Delete a user row to drop that rule."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        tabs = QTabWidget()
+        self.units_user = self._map_tab(
+            tabs, "Units", "Suffix", "Column", PREDEFINED_UNITS, rules["units"],
+        )
+        self.modality_user = self._map_tab(
+            tabs, "Modality", "Word", "Value", PREDEFINED_MODALITY, rules["modality"],
+        )
+        proc_pre = {w: w for w in PREDEFINED_PROCESSING}
+        proc_user = {w: w for w in rules["processing"]}
+        self.processing_user = self._map_tab(
+            tabs, "Processing", "Word", "Stored as", proc_pre, proc_user,
+        )
+        layout.addWidget(tabs, 1)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _map_tab(self, tabs, title, h0, h1, predefined, user):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.addWidget(QLabel("Predefined"))
+        pre = QTableWidget(0, 2)
+        pre.setHorizontalHeaderLabels([h0, h1])
+        self._fill(pre, predefined)
+        pre.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        pre.setMaximumHeight(160)
+        lay.addWidget(pre)
+        lay.addWidget(QLabel("User"))
+        user_table = QTableWidget(0, 2)
+        user_table.setHorizontalHeaderLabels([h0, h1])
+        user_table.horizontalHeader().setStretchLastSection(True)
+        self._fill(user_table, user)
+        lay.addWidget(user_table, 1)
+        row = QHBoxLayout()
+        row.addWidget(QPushButton("Add", clicked=lambda: self._add_row(user_table)))
+        row.addWidget(QPushButton("Remove selected", clicked=lambda: self._remove_rows(user_table)))
+        row.addWidget(QPushButton("Reset user to predefined", clicked=lambda: self._fill(user_table, predefined)))
+        row.addStretch()
+        lay.addLayout(row)
+        tabs.addTab(page, title)
+        return user_table
+
+    @staticmethod
+    def _fill(table: QTableWidget, rows: dict) -> None:
+        table.setRowCount(len(rows))
+        for i, (k, v) in enumerate(rows.items()):
+            table.setItem(i, 0, QTableWidgetItem(str(k)))
+            table.setItem(i, 1, QTableWidgetItem(str(v)))
+
+    @staticmethod
+    def _read(table: QTableWidget) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for r in range(table.rowCount()):
+            key_item = table.item(r, 0)
+            val_item = table.item(r, 1)
+            key = (key_item.text() if key_item else "").strip().lower()
+            val = (val_item.text() if val_item else "").strip().lower()
+            if key and " " not in key and "_" not in key:
+                out[key] = val or key
+        return out
+
+    @staticmethod
+    def _add_row(table: QTableWidget) -> None:
+        row = table.rowCount()
+        table.insertRow(row)
+        table.setItem(row, 0, QTableWidgetItem(""))
+        table.setItem(row, 1, QTableWidgetItem(""))
+
+    @staticmethod
+    def _remove_rows(table: QTableWidget) -> None:
+        rows = sorted({i.row() for i in table.selectedIndexes()}, reverse=True)
+        for r in rows:
+            table.removeRow(r)
+
+    def _save(self) -> None:
+        processing = list(self._read(self.processing_user).keys())
+        save_naming_rules(self._read(self.units_user), self._read(self.modality_user), processing)
+        self.accept()
+
+
+class HowToNameDialog(QDialog):
+    """Show the naming pages. The text is the markdown file, not a second copy."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("How to name files")
+        self.resize(720, 560)
+        layout = QVBoxLayout(self)
+        tabs = QTabWidget()
+        for title, filename in (("Cheat sheet", CHEAT_SHEET), ("Full", FULL)):
+            view = QTextBrowser()
+            view.setOpenExternalLinks(False)
+            view.setMarkdown(load_naming_doc(filename))
+            tabs.addTab(view, title)
+        layout.addWidget(tabs, 1)
+        close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close.rejected.connect(self.reject)
+        close.accepted.connect(self.accept)
+        layout.addWidget(close)
+
+
 class DampfGui(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -533,6 +654,7 @@ class DampfGui(QMainWindow):
         if p.exists():
             self.setWindowIcon(QIcon(str(p)))
         settings = load_settings()
+        ensure_naming_rules()
         # Default 800x1000 for laptop/Full HD; saved size from INI is used when present
         self.resize(settings["width"], settings["height"])
         self.setMinimumSize(640, 600)
@@ -661,6 +783,15 @@ class DampfGui(QMainWindow):
         self.depth_spin.setValue(99)
         self.depth_spin.setToolTip("Max folder depth for parameter extraction. 99 = no limit.")
         row1.addWidget(self.depth_spin)
+        how_btn = QPushButton("How to name…", clicked=self._show_how_to_name)
+        how_btn.setToolTip("The naming rules, from the same pages as the documentation.")
+        row1.addWidget(how_btn)
+        rules_btn = QPushButton("Naming rules…", clicked=self._edit_naming_rules)
+        rules_btn.setToolTip(
+            "Units, modality, and processing. The user block is what the crawl uses. "
+            "The predefined block is the shipped list."
+        )
+        row1.addWidget(rules_btn)
         row1.addStretch()
         crawl_l.addLayout(row1)
         top_content_l.addWidget(crawl_g)
@@ -1431,6 +1562,13 @@ class DampfGui(QMainWindow):
         self._suggest_exclude()
         self.folder_tree_w.blockSignals(False)
         self._folder_tree_ready = True
+        if not all_paths:
+            # Every file is in the crawl root. The info row is not a folder,
+            # so an empty checked-set must not drop the whole crawl.
+            self._folder_includes = None
+            self.rows = self._get_ext_filtered_rows()
+            self._update_folder_tree_title(len(self.rows))
+            return
         self._apply_folder_selection()
 
     def _update_folder_tree_title(self, selected_count: int | None) -> None:
@@ -1699,7 +1837,18 @@ class DampfGui(QMainWindow):
         }
         cfg["custom_token_map"] = dict(getattr(self, "custom_token_map", {}) or {})
         cfg["token_patterns"] = list(getattr(self, "token_patterns", []) or [])
+        rules = load_naming_rules()
+        cfg["unit_map"] = dict(rules["units"])
+        cfg["modality_map"] = dict(rules["modality"])
+        cfg["processing_tags"] = list(rules["processing"])
         return cfg
+
+    def _show_how_to_name(self) -> None:
+        HowToNameDialog(self).exec()
+
+    def _edit_naming_rules(self) -> None:
+        dlg = NamingRulesDialog(self)
+        dlg.exec()
 
     def _start_crawl(self) -> None:
         root_dir = self.root_edit.text().strip()

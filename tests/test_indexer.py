@@ -458,7 +458,7 @@ def test_hyphenated_name_is_not_extra_keys():
     words = parse_tokens(tokenize_string("noisy-and-dark-environment"))
     assert words.data == {}
     old = parse_tokens(tokenize_string("Plasma_ON"))
-    assert old.data.get("on") == "on"
+    assert old.data == {}
 
     slit = parse_tokens(tokenize_string("Slit-0p5mm"))
     assert slit.data["lengths"][0]["val"] == 0.5
@@ -501,3 +501,24 @@ def test_hyphenated_name_is_not_extra_keys():
     assert canonical.data["voltage"] == {"val": 4.0, "unit": "kv"}
     assert canonical.data["exposure"] == {"val": 10.0, "unit": "us"}
     assert canonical.data["frame"] == 1
+
+
+def test_short_word_is_not_a_column():
+    """A leftover word is not a column. The user block names columns with '='."""
+    assert parse_tokens(tokenize_string("on")).data == {}
+    assert parse_tokens(tokenize_string("FF")).data == {}
+    assert parse_tokens(["off"]).data == {}
+
+
+def test_user_unit_map_can_drop_exposure():
+    assert parse_tokens(["10us"], unit_map={}).data == {}
+    assert parse_tokens(["10us"], unit_map={"us": "gate"}).data["gate"] == {"val": 10.0, "unit": "us"}
+    assert "exposure" not in parse_tokens(["10us"], unit_map={"mm": "lengths"}).data
+
+
+def test_user_modality_and_processing_are_the_lists_passed_in():
+    assert parse_tokens(["rgb"], modality_map={}).data == {}
+    assert parse_tokens(["rgb"], modality_map={"rgb": "rgb"}).data["modality"] == "rgb"
+    assert parse_tokens(["dark"], processing_tags=set()).data == {}
+    assert parse_tokens(["dark"]).data["processing"] == ["dark"]
+    assert parse_tokens(["raw"], processing_tags={"flat"}).data == {}

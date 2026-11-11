@@ -1,5 +1,5 @@
 # indexer.py - Config-driven semantic indexer (used by CLI and GUI).
-# Naming conventions and recognized patterns: see docs/naming/Proper_file_naming_EN.md or docs/naming/Naming_Cheat_Sheet.md.
+# Naming conventions: see docs/naming/cheat_sheet_v2.md and docs/naming/file_names_explained_v2.md.
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from dampf.key_lut import GAS_KEYS, extract_val_for_export, format_val_unit, get_display_value, is_quantitative_val, unit_scale
+from dampf.naming_rules import PREDEFINED_MODALITY, PREDEFINED_PROCESSING, PREDEFINED_UNITS
 
 # Default config (overridable via run_indexer config)
 DEFAULT_ALLOWED_SUFFIXES = {
@@ -31,24 +32,6 @@ DEFAULT_STOPWORDS = {
     "misc", "temp", "test", "new", "old",
 }
 
-DEFAULT_MODALITY_MAP = {
-    "rgb": "rgb",
-    "ir": "ir",
-    "thermal": "thermal",
-    "th": "thermal",
-    "depth": "depth",
-    "tof": "tof",
-    "oes": "oes",
-    "spec": "spectroscopy",
-    "spectra": "spectroscopy",
-}
-
-PROC_TAGS = {
-    "raw", "dark", "flat", "cal", "calib", "ref", "reference", "bg", "background",
-    "mean", "avg", "median", "sum", "diff", "sub", "subtract", "norm", "normalized",
-    "aligned", "registered", "denoise", "filtered",
-}
-
 # Regexes (internal)
 RE_DATE_ISO = re.compile(r"^(?P<y>20\d{2})[-_\.]?(?P<m>\d{2})[-_\.]?(?P<d>\d{2})$")
 RE_DATE_ISO_DASH = re.compile(r"^(?P<y>20\d{2})-(?P<m>\d{2})-(?P<d>\d{2})$")
@@ -62,27 +45,11 @@ RE_CH = re.compile(r"^(?:ch|chan|channel|c)(?P<n>\d{1,3})$", re.IGNORECASE)
 RE_ROI = re.compile(r"^(?:roi)(?P<id>[a-z0-9]+)$")
 RE_FRAME = re.compile(r"^(?:frame|f)(?P<n>\d{1,9})$")
 RE_SEQ = re.compile(r"^(?P<n>\d{1,2})$")
-# Val: allow . or p as decimal (e.g. 4p2 -> 4.2); optional exponent
-_VAL = r"[-+]?\d+(?:[p.]\d+)?(?:e[-+]?\d+)?"
-RE_EXPOSURE = re.compile(r"^(?:exp|exposure|texp|texp=)?(?P<val>" + _VAL + r")(?P<unit>ns|us|µs|ms|s)$")
-RE_TEMP = re.compile(r"^(?:(?:t|temp|temperature)(?:=)?)?(?P<val>[-+]?\d+(?:[p.]\d+)?)(?P<unit>c|°c|k)$")
-RE_FREQ = re.compile(r"^(?:(?:f|freq|frequency)(?:=)?)?(?P<val>" + _VAL + r")(?P<unit>hz|khz|mhz|ghz)$")
-RE_VOLT = re.compile(r"^(?:(?:u|v|volt|voltage)(?:=)?)?(?P<val>" + _VAL + r")(?P<unit>uv|mv|v|kv)$")
-RE_CURR = re.compile(r"^(?:(?:i|a|amp|current)(?:=)?)?(?P<val>" + _VAL + r")(?P<unit>ua|ma|a)$")
-RE_LEN = re.compile(
-    r"^(?:x|y|z|d|dist|distance|meas|measurement|px|um|µm|mm|nm)?"
-    r"(?P<val>[-+]?\d+(?:[p.]\d+)?)(?P<unit>nm|um|µm|mm|cm|m|px)$"
-)
 # name=value inside one parameter. The name may contain '-' (it binds a name).
 # No length cap: '_' already ended the parameter, and the path limit covers the rest.
 RE_KV = re.compile(r"^(?P<k>[a-zA-Z][a-zA-Z0-9]*(?:-[a-zA-Z0-9]+)*)=(?P<v>.+)$")
 
-# One token = number (optional p decimal) + unit; keep as single token so parser sees e.g. 4p2kv, 500us
-RE_NUMBER_UNIT = re.compile(
-    r"^[-+]?\d+(?:p\d+)?(?:\.\d+)?(?:e[-+]?\d+)?"
-    r"(?:ns|us|µs|ms|s|hz|khz|mhz|ghz|uv|mv|v|kv|ua|ma|a|nm|um|mm|cm|m|px)$",
-    re.IGNORECASE,
-)
+_NUMBER_HEAD = r"[-+]?\d+(?:p\d+|\.\d+)?(?:e[-+]?\d+)?"
 
 # Letter(s) + number as one token (e.g. M25, S4, T250) -> param key=value
 RE_PARAM_TOKEN = re.compile(r"^[A-Za-z]{1,3}\d+$", re.IGNORECASE)
@@ -90,11 +57,45 @@ RE_PARAM = re.compile(r"^([a-z]{1,3})(\d+)$")
 # Number + letter(s) as one token (e.g. 300He, 300N2); letter part may contain digits (N2)
 RE_NUM_LETTERS_TOKEN = re.compile(r"^\d+(?:p\d+)?[A-Za-z][A-Za-z0-9]{0,2}$", re.IGNORECASE)
 RE_NUM_LETTERS = re.compile(r"^(\d+(?:p\d+)?)([a-z][a-z0-9]{0,2})$")
-# 2-4 letters only (e.g. FF, KPSc) -> string param key=value
-RE_LETTERS_ONLY_TOKEN = re.compile(r"^[A-Za-z]{2,4}$", re.IGNORECASE)
 # Flow: Zahl + slm + Gas (e.g. 5slmAr, 10slmN2) -> gas_flow
 RE_SLM_FLOW_TOKEN = re.compile(r"^\d+(?:p\d+)?slm[a-zA-Z][a-zA-Z0-9]{0,2}$", re.IGNORECASE)
 RE_SLM_FLOW = re.compile(r"^(\d+(?:p\d+)?)slm([a-zA-Z][a-zA-Z0-9]{0,2})$", re.IGNORECASE)
+
+
+def _unit_map_or_default(unit_map: Optional[Dict[str, str]]) -> Dict[str, str]:
+    return PREDEFINED_UNITS if unit_map is None else unit_map
+
+
+def _number_unit_token_re(unit_map: Dict[str, str]) -> re.Pattern:
+    """Keep number+known-suffix as one token (4p2kv, 500us). Empty map matches nothing."""
+    if not unit_map:
+        return re.compile(r"(?!)")
+    alts = "|".join(re.escape(s) for s in sorted(unit_map, key=len, reverse=True))
+    return re.compile(rf"^{_NUMBER_HEAD}(?:{alts})$", re.IGNORECASE)
+
+
+def match_number_unit(piece: str, unit_map: Optional[Dict[str, str]] = None) -> Optional[Tuple[str, Any, str]]:
+    """Number plus a suffix from the unit list. The suffix names the column."""
+    units = _unit_map_or_default(unit_map)
+    if not units or not piece:
+        return None
+    text = piece.lower().replace("µ", "u").replace("°", "")
+    m = re.fullmatch(rf"({_NUMBER_HEAD})([a-z]+)", text)
+    if not m:
+        return None
+    suffix = m.group(2)
+    if suffix not in units:
+        return None
+    val = parse_number(m.group(1))
+    if val is None:
+        return None
+    column = units[suffix].strip().lower()
+    if not column:
+        return None
+    if column == "lengths":
+        entry = {"val": val, "unit": suffix, "SI_m": (val * unit_scale(suffix)) if suffix != "px" else None}
+        return column, entry, "lengths"
+    return column, {"val": val, "unit": suffix}, column
 
 
 def is_hidden(path: Path) -> bool:
@@ -140,28 +141,29 @@ def tokenize_string(
     s: str,
     stopwords: Optional[set] = None,
     norm_to_orig: Optional[Dict[str, str]] = None,
+    unit_map: Optional[Dict[str, str]] = None,
 ) -> List[str]:
     """Return normalized tokens. If norm_to_orig given, fill with normalized->original mapping."""
     stopwords = stopwords or DEFAULT_STOPWORDS
+    units = _unit_map_or_default(unit_map)
+    number_unit = _number_unit_token_re(units)
     s = s.strip()
     if not s:
         return []
     if norm_to_orig is None:
         norm_to_orig = {}
-    # Normalize decimal dot to p (e.g. 4.2kv -> 4p2kv) before split, since . is a delimiter.
-    # Parameter split is '_' and path punctuation. '-' stays inside one name (plasma-on, 2024-02-07).
+    # Parameter split is '_' and path punctuation. '-' stays inside one name.
     s = re.sub(r"(\d)\.(\d)", r"\1p\2", s)
     s = re.sub(r"[\/\\_\.\+\(\)\[\]\{\},;]+", " ", s)
     raw = [p for p in s.split() if p]
     out: List[str] = []
     for p in raw:
         pl = p.replace("µ", "u").lower()
-        # '=' is one parameter (voltage=4kv). '-' is one name (plasma-on, 2024-02-07).
-        # Do not split either on letter/digit boundaries.
+        # '=' is one parameter. '-' is one name. Do not split either on letter/digit boundaries.
         if "=" in pl or "-" in pl:
             out.append(pl)
             norm_to_orig.setdefault(pl, p)
-        elif RE_NUMBER_UNIT.match(pl):
+        elif number_unit.match(pl):
             out.append(pl)
             norm_to_orig.setdefault(pl, p)
         elif RE_PARAM_TOKEN.match(pl):
@@ -176,9 +178,6 @@ def tokenize_string(
                 out.append(pl)
                 norm_to_orig.setdefault(pl, p)
         elif RE_NUM_LETTERS_TOKEN.match(pl):
-            out.append(pl)
-            norm_to_orig.setdefault(pl, p)
-        elif RE_LETTERS_ONLY_TOKEN.match(pl):
             out.append(pl)
             norm_to_orig.setdefault(pl, p)
         elif RE_SLM_FLOW_TOKEN.match(pl):
@@ -206,13 +205,14 @@ def tokenize_string(
     return norm
 
 
-def tokenize_path(path: Path, root: Path, folder_depth: int, stopwords: Optional[set] = None) -> List[str]:
-    folder_tokens, file_tokens, _ = tokenize_path_parts(path, root, folder_depth, stopwords)
+def tokenize_path(path: Path, root: Path, folder_depth: int, stopwords: Optional[set] = None, unit_map: Optional[Dict[str, str]] = None) -> List[str]:
+    folder_tokens, file_tokens, _ = tokenize_path_parts(path, root, folder_depth, stopwords, unit_map=unit_map)
     return folder_tokens + file_tokens
 
 
 def tokenize_path_parts(
-    path: Path, root: Path, folder_depth: int, stopwords: Optional[set] = None
+    path: Path, root: Path, folder_depth: int, stopwords: Optional[set] = None,
+    unit_map: Optional[Dict[str, str]] = None,
 ) -> Tuple[List[str], List[str], Dict[str, str]]:
     """Return (folder_tokens, file_tokens, norm_to_orig)."""
     rel = path.relative_to(root)
@@ -228,9 +228,9 @@ def tokenize_path_parts(
         use_folders = folders[-folder_depth:] if folder_depth < 99 else folders
         folder_tokens = []
         for f in use_folders:
-            folder_tokens.extend(tokenize_string(f, stopwords, norm_to_orig))
+            folder_tokens.extend(tokenize_string(f, stopwords, norm_to_orig, unit_map=unit_map))
     stem = Path(filename).stem
-    file_tokens = tokenize_string(stem, stopwords, norm_to_orig)
+    file_tokens = tokenize_string(stem, stopwords, norm_to_orig, unit_map=unit_map)
     return folder_tokens, file_tokens, norm_to_orig
 
 
@@ -336,42 +336,11 @@ def _hyphen_binds_name(tok: str) -> bool:
     return "-" in body
 
 
-def _quantitative_from_piece(piece: str) -> Optional[Tuple[str, Any, str]]:
-    """Number+unit, slm, or gas% in one hyphen segment. Not a new parameter name."""
-    m = RE_EXPOSURE.match(piece)
-    if m:
-        val = parse_number(m.group("val"))
-        if val is not None:
-            unit = m.group("unit").replace("µ", "u")
-            return "exposure", {"val": val, "unit": unit}, "exposure"
-    m = RE_TEMP.match(piece)
-    if m:
-        val = parse_number(m.group("val"))
-        unit = m.group("unit").replace("°", "").lower()
-        if val is not None:
-            return "temp", {"val": val, "unit": unit}, "temp"
-    m = RE_FREQ.match(piece)
-    if m:
-        val = parse_number(m.group("val"))
-        if val is not None:
-            return "freq", {"val": val, "unit": m.group("unit").lower()}, "freq"
-    m = RE_VOLT.match(piece)
-    if m:
-        val = parse_number(m.group("val"))
-        if val is not None:
-            return "voltage", {"val": val, "unit": m.group("unit").lower()}, "volt"
-    m = RE_CURR.match(piece)
-    if m:
-        val = parse_number(m.group("val"))
-        if val is not None:
-            return "current", {"val": val, "unit": m.group("unit").lower()}, "curr"
-    m = RE_LEN.match(piece)
-    if m and any(ch.isdigit() for ch in piece):
-        val = parse_number(m.group("val"))
-        unit = m.group("unit").replace("µ", "u")
-        if val is not None:
-            entry = {"val": val, "unit": unit, "SI_m": (val * unit_scale(unit)) if unit != "px" else None}
-            return "lengths", entry, "lengths"
+def _quantitative_from_piece(piece: str, unit_map: Optional[Dict[str, str]] = None) -> Optional[Tuple[str, Any, str]]:
+    """Number+unit from the unit list, slm, or gas% in one hyphen segment."""
+    hit = match_number_unit(piece, unit_map)
+    if hit is not None:
+        return hit
     m = RE_SLM_FLOW.match(piece)
     if m:
         val = parse_number(m.group(1))
@@ -382,10 +351,8 @@ def _quantitative_from_piece(piece: str) -> Optional[Tuple[str, Any, str]]:
     if m and not re.fullmatch(r"\d+p\d+", piece):
         num_part, letters = m.group(1), m.group(2).lower()
         val = parse_number(num_part)
-        if val is not None:
-            if letters in GAS_KEYS:
-                return letters, {"val": int(val) if val == int(val) else val, "unit": "%"}, "gas_pct"
-            return letters, int(val) if val == int(val) else val, "num_letters"
+        if val is not None and letters in GAS_KEYS:
+            return letters, {"val": int(val) if val == int(val) else val, "unit": "%"}, "gas_pct"
     return None
 
 
@@ -410,8 +377,12 @@ def parse_tokens(
     token_patterns: Optional[List[Dict[str, Any]]] = None,
     custom_token_map: Optional[Dict[str, str]] = None,
     only_last_plain_digits_as_frame: bool = False,
+    unit_map: Optional[Dict[str, str]] = None,
+    processing_tags: Optional[set] = None,
 ) -> ParseResult:
-    modality_map = modality_map or DEFAULT_MODALITY_MAP
+    modality_map = PREDEFINED_MODALITY if modality_map is None else modality_map
+    units = _unit_map_or_default(unit_map)
+    tags = set(PREDEFINED_PROCESSING) if processing_tags is None else set(processing_tags)
     data: Dict[str, Any] = {}
     trace: List[str] = []
     token_to_key: Dict[str, str] = {}
@@ -472,7 +443,7 @@ def parse_tokens(
         m = RE_KV.match(tok)
         if m:
             k, v = m.group("k").lower(), m.group("v").lower()
-            hit = _quantitative_from_piece(v)
+            hit = _quantitative_from_piece(v, units)
             if hit is not None:
                 _inferred, val, _why = hit
                 set_field(k, val, "kv", tok)
@@ -577,7 +548,7 @@ def parse_tokens(
         if tok in modality_map:
             set_field("modality", modality_map[tok], "modality", tok)
             continue
-        if tok in PROC_TAGS:
+        if tok in tags:
             if "processing" not in data:
                 data["processing"] = [tok]
                 trace.append("processing:tag")
@@ -586,65 +557,26 @@ def parse_tokens(
             elif isinstance(data["processing"], list) and tok not in data["processing"]:
                 data["processing"].append(tok)
             continue
-        m = RE_EXPOSURE.match(tok)
-        if m and not _hyphen_binds_name(tok):
-            val = parse_number(m.group("val"))
-            unit = m.group("unit").replace("µ", "u")
-            if val is not None:
-                # Val in crawled unit (500 for "500us"); unit for traceability
-                set_field("exposure", {"val": val, "unit": unit}, "exposure", tok)
-            continue
-        m = RE_TEMP.match(tok)
-        if m and not _hyphen_binds_name(tok):
-            val = parse_number(m.group("val"))
-            unit = m.group("unit").replace("°", "").lower()
-            if val is not None:
-                set_field("temp", {"val": val, "unit": unit}, "temp", tok)
-            continue
-        m = RE_FREQ.match(tok)
-        if m and not _hyphen_binds_name(tok):
-            val = parse_number(m.group("val"))
-            unit = m.group("unit").lower()
-            if val is not None:
-                set_field("freq", {"val": val, "unit": unit}, "freq", tok)
-            continue
-        m = RE_VOLT.match(tok)
-        if m and not _hyphen_binds_name(tok):
-            val = parse_number(m.group("val"))
-            unit = m.group("unit").lower()
-            if val is not None:
-                set_field("voltage", {"val": val, "unit": unit}, "volt", tok)
-            continue
-        m = RE_CURR.match(tok)
-        if m and not _hyphen_binds_name(tok):
-            val = parse_number(m.group("val"))
-            unit = m.group("unit").lower()
-            if val is not None:
-                set_field("current", {"val": val, "unit": unit}, "curr", tok)
-            continue
-        m = RE_LEN.match(tok)
-        if m and any(ch.isdigit() for ch in tok) and not _hyphen_binds_name(tok):
-            val = parse_number(m.group("val"))
-            unit = m.group("unit").replace("µ", "u")
-            if val is not None:
-                entry = {"val": val, "unit": unit, "SI_m": (val * unit_scale(unit)) if unit != "px" else None}
+        hit = match_number_unit(tok, units) if not _hyphen_binds_name(tok) else None
+        if hit is not None:
+            key, val, why = hit
+            if key == "lengths":
                 if "lengths" not in data:
-                    data["lengths"] = [entry]
+                    data["lengths"] = [val]
                     trace.append("lengths:len")
                     recognized += 1
                     token_to_key[tok] = "lengths"
                 elif isinstance(data.get("lengths"), list):
-                    data["lengths"].append(entry)
+                    data["lengths"].append(val)
+            else:
+                set_field(key, val, why, tok)
             continue
         m = RE_NUM_LETTERS.match(tok)
         if m and not _hyphen_binds_name(tok) and not re.fullmatch(r"\d+p\d+", tok):
             num_part, letters = m.group(1), m.group(2).lower()
             val = parse_number(num_part)
-            if val is not None:
-                if letters in GAS_KEYS:
-                    set_field(letters, {"val": int(val) if val == int(val) else val, "unit": "%"}, "gas_pct", tok)
-                else:
-                    set_field(letters, int(val) if val == int(val) else val, "num_letters", tok)
+            if val is not None and letters in GAS_KEYS:
+                set_field(letters, {"val": int(val) if val == int(val) else val, "unit": "%"}, "gas_pct", tok)
             continue
         m = RE_SLM_FLOW.match(tok)
         if m and not _hyphen_binds_name(tok):
@@ -655,7 +587,7 @@ def parse_tokens(
             continue
         # '-' binds one name. Read a number+unit inside it; do not promote the words to keys.
         if "-" in tok:
-            hits = [h for h in (_quantitative_from_piece(p) for p in tok.split("-") if p) if h]
+            hits = [h for h in (_quantitative_from_piece(p, units) for p in tok.split("-") if p) if h]
             if hits:
                 linked = False
                 for key, val, why in hits:
@@ -673,9 +605,6 @@ def parse_tokens(
                         recognized += 1
                         linked = True
                 continue
-        if RE_LETTERS_ONLY_TOKEN.match(tok) and tok not in modality_map and tok not in PROC_TAGS and tok not in data:
-            set_field(tok, tok, "letters_param", tok)
-            continue
         if re.fullmatch(r"(?:exp|experiment)\d{1,4}", tok):
             set_field("experiment", tok.replace("experiment", "exp"), "experiment", tok)
             continue
@@ -850,18 +779,23 @@ def suggest_categorical_keys(
 _PARALLEL_THRESHOLD = 100
 
 
-def _index_single_file(
-    args: Tuple[Path, Path, int, frozenset, Dict[str, str], List[Dict[str, Any]], Dict[str, str]]
-) -> Dict[str, Any]:
+def _index_single_file(args: Tuple) -> Dict[str, Any]:
     """Worker for ProcessPoolExecutor: index one file. Top-level for picklability."""
-    p, root, folder_depth, stopwords, modality_map, token_patterns, custom_token_map = args
-    folder_tokens, file_tokens, norm_to_orig = tokenize_path_parts(p, root, folder_depth, stopwords=stopwords)
+    (
+        p, root, folder_depth, stopwords, modality_map, token_patterns, custom_token_map,
+        unit_map, processing_tags,
+    ) = args
+    folder_tokens, file_tokens, norm_to_orig = tokenize_path_parts(
+        p, root, folder_depth, stopwords=stopwords, unit_map=unit_map,
+    )
     tokens = folder_tokens + file_tokens
     pr_folder = parse_tokens(
         folder_tokens,
         modality_map=modality_map,
         token_patterns=token_patterns,
         custom_token_map=custom_token_map,
+        unit_map=unit_map,
+        processing_tags=processing_tags,
     )
     pr_file = parse_tokens(
         file_tokens,
@@ -869,6 +803,8 @@ def _index_single_file(
         token_patterns=token_patterns,
         custom_token_map=custom_token_map,
         only_last_plain_digits_as_frame=True,
+        unit_map=unit_map,
+        processing_tags=processing_tags,
     )
     row: Dict[str, Any] = {}
     row.update(pr_folder.data)
@@ -933,7 +869,18 @@ def run_indexer(
     if stopwords is not None and not isinstance(stopwords, set):
         stopwords = set(stopwords)
     stopwords = stopwords or DEFAULT_STOPWORDS
-    modality_map = cfg.get("modality_map") or DEFAULT_MODALITY_MAP
+    if "modality_map" in cfg and cfg.get("modality_map") is not None:
+        modality_map = dict(cfg["modality_map"])
+    else:
+        modality_map = dict(PREDEFINED_MODALITY)
+    if "unit_map" in cfg and cfg.get("unit_map") is not None:
+        unit_map = {str(k).lower(): str(v).strip().lower() for k, v in dict(cfg["unit_map"]).items()}
+    else:
+        unit_map = dict(PREDEFINED_UNITS)
+    if "processing_tags" in cfg and cfg.get("processing_tags") is not None:
+        processing_tags = {str(t).strip().lower() for t in cfg["processing_tags"] if str(t).strip()}
+    else:
+        processing_tags = set(PREDEFINED_PROCESSING)
     token_patterns = list(cfg.get("token_patterns") or [])
     custom_token_map = dict(cfg.get("custom_token_map") or {})
     log_cb: Optional[Callable[[str], None]] = cfg.get("log_callback")
@@ -951,6 +898,8 @@ def run_indexer(
 
     stopwords_frozen = frozenset(stopwords)
     modality_map_copy = dict(modality_map)
+    unit_map_copy = dict(unit_map)
+    processing_frozen = frozenset(processing_tags)
 
     parallel_threshold = cfg.get("parallel_threshold", _PARALLEL_THRESHOLD)
     max_workers = cfg.get("parallel_max_workers")
@@ -963,14 +912,14 @@ def run_indexer(
     t2 = time.perf_counter()
     if use_parallel:
         args_list = [
-            (p, root, folder_depth, stopwords_frozen, modality_map_copy, token_patterns, custom_token_map)
+            (p, root, folder_depth, stopwords_frozen, modality_map_copy, token_patterns, custom_token_map, unit_map_copy, processing_frozen)
             for p in file_list
         ]
         with ProcessPoolExecutor(max_workers=max_workers) as ex:
             rows = list(ex.map(_index_single_file, args_list))
     else:
         rows = [
-            _index_single_file((p, root, folder_depth, stopwords_frozen, modality_map_copy, token_patterns, custom_token_map))
+            _index_single_file((p, root, folder_depth, stopwords_frozen, modality_map_copy, token_patterns, custom_token_map, unit_map_copy, processing_frozen))
             for p in file_list
         ]
     t3 = time.perf_counter()

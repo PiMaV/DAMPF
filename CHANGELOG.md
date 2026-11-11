@@ -11,18 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [1.2.0] - 2026-11-11
+
+### Changed
+
 - Docs pared to README, English naming convention + cheat sheet, and `docs/llm-brief.md`; planning essays and duplicate runbooks removed.
 - GitHub Release binaries use branded, versioned names: `DAMPF-vX.Y.Z.exe` (Windows) and `DAMPF-vX.Y.Z-linux-x86_64` (glibc/x86_64; built on Ubuntu).
-- Naming docs state when `-` is only a name and when `=` is one shared column: `plasma=on` / `plasma=off` filter as text, `temp=22p5` / `temp=18` / `temp=30` sort as numbers. WOLKE sees the SQLite name, with `-` written as `_`.
+- Naming rules for units, modality, and processing live in `dampf.ini`: a predefined block (shipped list) and a user block (what the crawl uses). The user block can drop a rule, for example exposure. A leftover word of 2–4 letters is no longer a column.
+- **How to name…** shows the naming pages. They are three rules (`_` separates, `-` glues, `=` defines) plus short examples. The text is the markdown files, bundled into the release binary.
 
 ### Fixed
 
+- Files that sit directly in the crawl root stay in the index. Include folders showed 0 selected and Detected keys stayed empty, because the root has no folder checkbox.
 - Crawl no longer creates the output folder. A Windows path kept in local `dampf.ini` was created as a real directory on Linux (the whole `C:\…\_index` string as one folder name in the working directory) on every crawl.
 - Indexer follows the naming schema: `_` separates parameters, `-` stays inside one name. `plasma-on` is one token; `2024-02-07` stays a date; a number+unit inside a hyphenated name (`Slit-0p5mm`, `150us-Exposure`) is still read.
 - `name=value` stays one parameter. `voltage=4kV` and `temp=22p5` are read as numbers; `c-set=001` and `target-material=glass` are valid names. There is no 17-character cap. SQLite writes a `-` in the column name as `_`.
 - Include-folders (#3): unchecking a parent now cascades to children; step 4 file counts refresh; empty selection no longer silently re-includes everything. Title shows how many files are selected. Checkbox clicks are on/off only (partial is display-only when children differ).
-
-### Removed
 
 ## [1.1.0] - 2026-11-11
 

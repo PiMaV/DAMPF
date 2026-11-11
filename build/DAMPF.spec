@@ -18,7 +18,11 @@ _gui_script = _repo_root / "app" / "dampf" / "gui.py"
 # Windows prefers .ico; Linux desktop icon embedding works better with PNG.
 _icon_path = _icon_dir / ("icon.ico" if sys.platform == "win32" else "icon_256.png")
 
-datas = [(str(_icon_dir), "icon")]
+datas = [
+    (str(_icon_dir), "icon"),
+    (str(_repo_root / "docs" / "naming" / "cheat_sheet_v2.md"), "docs/naming"),
+    (str(_repo_root / "docs" / "naming" / "file_names_explained_v2.md"), "docs/naming"),
+]
 binaries = []
 hiddenimports = [
     "dampf.indexer",
@@ -26,7 +30,8 @@ hiddenimports = [
     "dampf.outlier_detection",
     "dampf.key_lut",
     "dampf.app_settings",
-    "dampf.schema_io",
+    "dampf.naming_rules",
+    "dampf.naming_docs",
 ]
 tmp_ret = collect_all("PyQt6")
 datas += tmp_ret[0]

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import configparser
+import io
 import os
 import re
 import sys
 from pathlib import Path
+
+from dampf.naming_rules import PREDEFINED_MODALITY, PREDEFINED_PROCESSING, PREDEFINED_UNITS
 
 # Windows drive path, e.g. C:\DATEN\... or C:/DATEN/...
 _WIN_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -50,6 +53,106 @@ def stored_path_for_this_os(path: str) -> str:
     if os.name != "nt" and ("\\" in text or _WIN_DRIVE.match(text)):
         return ""
     return text
+
+
+def _parser() -> configparser.ConfigParser:
+    return configparser.ConfigParser(interpolation=None)
+
+
+def _read_parser() -> configparser.ConfigParser:
+    cfg = _parser()
+    p = _get_settings_path()
+    if p.is_file():
+        cfg.read(p, encoding="utf-8")
+    return cfg
+
+
+def _write_parser(cfg: configparser.ConfigParser) -> None:
+    p = _get_settings_path()
+    body = []
+    # configparser writes sections; keep one line so the file explains the two blocks.
+    note = (
+        "; *.predefined is restored from the program on save and shows the shipped lists.\n"
+        "; *.user is the block the crawl uses. Delete a line there to drop that rule.\n"
+    )
+    buf = io.StringIO()
+    cfg.write(buf)
+    body.append(note)
+    body.append(buf.getvalue())
+    try:
+        p.write_text("".join(body), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _section_dict(cfg: configparser.ConfigParser, name: str) -> dict[str, str] | None:
+    if not cfg.has_section(name):
+        return None
+    return {k.strip().lower(): (v or "").strip() for k, v in cfg[name].items()}
+
+
+def _put_map(cfg: configparser.ConfigParser, name: str, rows: dict[str, str]) -> None:
+    if cfg.has_section(name):
+        cfg.remove_section(name)
+    cfg[name] = {str(k).strip().lower(): str(v).strip() for k, v in rows.items() if str(k).strip()}
+
+
+def _put_words(cfg: configparser.ConfigParser, name: str, words: list[str] | tuple[str, ...]) -> None:
+    rows = {w.strip().lower(): w.strip().lower() for w in words if w and w.strip()}
+    _put_map(cfg, name, rows)
+
+
+def _seed_user_sections(cfg: configparser.ConfigParser) -> bool:
+    """Write predefined blocks. Seed a missing user block from them. Return True if a user block was created."""
+    seeded = False
+    _put_map(cfg, "units.predefined", PREDEFINED_UNITS)
+    if _section_dict(cfg, "units.user") is None:
+        _put_map(cfg, "units.user", PREDEFINED_UNITS)
+        seeded = True
+    _put_map(cfg, "modality.predefined", PREDEFINED_MODALITY)
+    if _section_dict(cfg, "modality.user") is None:
+        _put_map(cfg, "modality.user", PREDEFINED_MODALITY)
+        seeded = True
+    _put_words(cfg, "processing.predefined", PREDEFINED_PROCESSING)
+    if _section_dict(cfg, "processing.user") is None:
+        _put_words(cfg, "processing.user", PREDEFINED_PROCESSING)
+        seeded = True
+    return seeded
+
+
+def load_naming_rules() -> dict:
+    """Active rules: the *.user sections. A missing section is the shipped list (not yet saved)."""
+    cfg = _read_parser()
+    units = _section_dict(cfg, "units.user")
+    modality = _section_dict(cfg, "modality.user")
+    processing = _section_dict(cfg, "processing.user")
+    return {
+        "units": dict(PREDEFINED_UNITS) if units is None else units,
+        "modality": dict(PREDEFINED_MODALITY) if modality is None else modality,
+        "processing": list(PREDEFINED_PROCESSING) if processing is None else list(processing.keys()),
+    }
+
+
+def save_naming_rules(units: dict[str, str], modality: dict[str, str], processing: list[str]) -> None:
+    """Write user blocks and refresh the predefined blocks. Other sections stay."""
+    cfg = _read_parser()
+    _put_map(cfg, "units.predefined", PREDEFINED_UNITS)
+    _put_map(cfg, "units.user", units)
+    _put_map(cfg, "modality.predefined", PREDEFINED_MODALITY)
+    _put_map(cfg, "modality.user", modality)
+    _put_words(cfg, "processing.predefined", PREDEFINED_PROCESSING)
+    _put_words(cfg, "processing.user", processing)
+    _write_parser(cfg)
+
+
+def ensure_naming_rules() -> None:
+    """Create dampf.ini rule sections when a user block is not there yet."""
+    cfg = _read_parser()
+    if _seed_user_sections(cfg):
+        _write_parser(cfg)
+    elif not cfg.has_section("units.predefined"):
+        _seed_user_sections(cfg)
+        _write_parser(cfg)
 
 
 def load_settings() -> dict:
@@ -118,9 +221,12 @@ def save_settings(
     outer_splitter_sizes: str = "",
     confidence_threshold: float = 0.3,
 ) -> None:
-    """Save window size, paths, theme, splitter sizes, and outlier threshold to dampf.ini."""
-    p = _get_settings_path()
-    cfg = configparser.ConfigParser()
+    """Save window size, paths, theme, splitter sizes, and outlier threshold to dampf.ini.
+
+    Naming rule sections already in the file are kept. Missing user blocks are
+    seeded from the shipped lists. Predefined blocks are rewritten from the program.
+    """
+    cfg = _read_parser()
     thr = max(0.0, min(1.0, float(confidence_threshold)))
     dampf = {
         "width": str(width),
@@ -142,8 +248,5 @@ def save_settings(
         "output_dir": stored_path_for_this_os(output_dir),
         "db_path": stored_path_for_this_os(db_path),
     }
-    try:
-        with p.open("w", encoding="utf-8") as f:
-            cfg.write(f)
-    except OSError:
-        pass
+    _seed_user_sections(cfg)
+    _write_parser(cfg)

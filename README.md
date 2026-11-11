@@ -17,7 +17,7 @@ Indexes folder and file names into a **SQLite** database — one row per file �
 - **Uniques** — distinct values in the current file set.
 - **Full** — how many files have the key; `(−N)` means N files are missing it.
 
-**Naming:** [Cheat sheet](docs/naming/Naming_Cheat_Sheet.md) · [full convention](docs/naming/Proper_file_naming_EN.md)
+**Naming:** [Cheat sheet](docs/naming/cheat_sheet_v2.md) · [full convention](docs/naming/file_names_explained_v2.md)
 
 For agents: [`docs/llm-brief.md`](docs/llm-brief.md).
 
