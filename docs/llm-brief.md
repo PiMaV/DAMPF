@@ -82,7 +82,7 @@ uv run python scripts/build_exe.py
 
 → `dist/DAMPF.exe` (Windows) or `dist/DAMPF` (Linux). Icons from `icon/`.
 
-Release: `pyproject.toml` `version` must match the tag. Push tag `vX.Y.Z` (current `v1.2.0`) on the commit that has that version → Actions **Release** publishes `DAMPF-vX.Y.Z.exe` and `DAMPF-vX.Y.Z-linux-x86_64`. Push to `main` alone runs CI only.
+Release: `pyproject.toml` `version` must match the tag. Push tag `vX.Y.Z` (current `v1.2.1`) on the commit that has that version → Actions **Release** publishes `DAMPF-vX.Y.Z.exe` and `DAMPF-vX.Y.Z-linux-x86_64`. The Linux job is pinned to `ubuntu-24.04` so the onefile binary does not require glibc 2.43. Do not move it to `ubuntu-latest` while that label is Ubuntu 26. Push to `main` alone runs CI only.
 
 Linux runtime needs usual Qt/X11 libs for PyQt6 (`libxcb-cursor0`, `libxkbcommon-x11-0`, `libegl1`, `libgl1`, …).
 

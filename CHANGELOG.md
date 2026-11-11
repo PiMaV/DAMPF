@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+## [1.2.1] - 2026-11-11
+
+### Fixed
+
+- Linux release binary is built on Ubuntu 24.04. The 1.2.0 file was built on Ubuntu 26 and would not start on glibc 2.39 (`GLIBC_2.43` not found).
+
 ## [1.2.0] - 2026-11-11
 
 ### Changed

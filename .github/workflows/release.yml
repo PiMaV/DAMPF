@@ -36,7 +36,9 @@ jobs:
           generate_release_notes: true
 
   build-linux-binary:
-    runs-on: ubuntu-latest
+    # ubuntu-latest is Ubuntu 26 (glibc 2.43) as of 2026-10. The onefile
+    # binary then refuses to start on glibc 2.39. Stay on 24.04.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
