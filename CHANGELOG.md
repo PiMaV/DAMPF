@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+## [1.3.0] - 2026-11-11
+
+### Added
+
+- A folder part or filename underscore block that changes across files becomes a column on its own (`folder_1`, `field_3`, …). A block that is the same in every file stays gray. The column is Category, or Numeric when it has more than 10 distinct numbers.
+
+### Changed
+
+- Step 4 **Cat** checkbox is a **Type** dropdown: Numeric or Category. The dropdown overrides the suggestion.
+
 ## [1.2.1] - 2026-11-11
 
 ### Fixed

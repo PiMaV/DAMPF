@@ -88,5 +88,6 @@ Write the block with `_`, `-`, and `=` instead.
 ## 7. In DAMPF
 
 - Pad the frame with the same width (`0001`–`9999`). DAMPF stores `0042` as 42. The zeros are for the file manager.
-- **Cat:** If a number has fewer than 10 distinct values, DAMPF ticks **Cat**. WOLKE then shows filters instead of a slider. Untick **Cat** when those values are a real measurement (a voltage sweep, a temperature sweep).
+- **Type:** A block that changes is **Category**. More than 10 different numbers are **Numeric**. Choose **Numeric** when a short list is still a measurement (a voltage sweep, a temperature sweep).
+- A folder or underscore block that is the same in every file stays gray. A block that changes is stored on its own.
 - **Naming rules:** Units, modality words, and processing words are lists in this installation. Delete an entry you do not want recognized.

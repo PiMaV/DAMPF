@@ -19,7 +19,7 @@ Product stance: local single-user GUI + optional CLI indexer script. Determinist
 - Default ASCII export folder: `root/_index` (`index.jsonl`, `index.csv`, `index_meta.json`).
 - Local UI state in `dampf.ini` next to the executable (frozen) or CWD (dev); gitignored. Template: `config/dampf.ini`. Window, paths, and the naming rubrics (units, modality, processing). Each rubric has a `*.predefined` block (rewritten from `naming_rules.py` on save) and a `*.user` block (what the crawl uses; the user may delete rows).
 - Schema save/load: `project.json` / `project.ini` and Load schema from DB (`schema_io.py`, `load_schema_from_db`).
-- Step 4: **Used** selects export columns; **Cat** forces TEXT for WOLKE filters (default when fewer than 10 distinct values).
+- Step 4: **Used** selects export columns. **Type** is Numeric or Category. Folder parts and filename `_` fields are blocks. A block with one value stays unrecognized (gray). A block with several values becomes `folder_N` or `field_N` (1-based), Category unless more than 10 distinct numbers (then Numeric). Parser keys such as `dgm` and `frame` are left as parsed. The Type dropdown overrides the suggestion. `slot_keys` in the saved schema records the block columns.
 - **How to name…** shows [naming/cheat_sheet_v2.md](naming/cheat_sheet_v2.md) and [naming/file_names_explained_v2.md](naming/file_names_explained_v2.md). Those files are bundled in the release binary (`docs/naming/` next to the icon). Do not keep a second copy of the rules in the GUI source. Three character rules stay in the indexer: `_` separates, `-` glues a name, `=` defines name and value.
 
 ## Don't
@@ -82,7 +82,7 @@ uv run python scripts/build_exe.py
 
 → `dist/DAMPF.exe` (Windows) or `dist/DAMPF` (Linux). Icons from `icon/`.
 
-Release: `pyproject.toml` `version` must match the tag. Push tag `vX.Y.Z` (current `v1.2.1`) on the commit that has that version → Actions **Release** publishes `DAMPF-vX.Y.Z.exe` and `DAMPF-vX.Y.Z-linux-x86_64`. The Linux job is pinned to `ubuntu-24.04` so the onefile binary does not require glibc 2.43. Do not move it to `ubuntu-latest` while that label is Ubuntu 26. Push to `main` alone runs CI only.
+Release: `pyproject.toml` `version` must match the tag. Push tag `vX.Y.Z` (current `v1.3.0`) on the commit that has that version → Actions **Release** publishes `DAMPF-vX.Y.Z.exe` and `DAMPF-vX.Y.Z-linux-x86_64`. The Linux job is pinned to `ubuntu-24.04` so the onefile binary does not require glibc 2.43. Do not move it to `ubuntu-latest` while that label is Ubuntu 26. Push to `main` alone runs CI only.
 
 Linux runtime needs usual Qt/X11 libs for PyQt6 (`libxcb-cursor0`, `libxkbcommon-x11-0`, `libegl1`, `libgl1`, …).
 

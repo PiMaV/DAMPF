@@ -13,6 +13,15 @@ from dampf.indexer import (
     detect_dominant_suffix,
     apply_majority_frame_logic,
     tokenize_path_parts,
+    apply_slot_keys,
+    remove_slot_keys,
+    normalize_column_key,
+    slot_at,
+    slot_keys_from_schema,
+    slot_keys_to_schema,
+    slot_span,
+    suggest_block_columns,
+    suggest_categorical_keys,
 )
 
 
@@ -522,3 +531,136 @@ def test_user_modality_and_processing_are_the_lists_passed_in():
     assert parse_tokens(["dark"], processing_tags=set()).data == {}
     assert parse_tokens(["dark"]).data["processing"] == ["dark"]
     assert parse_tokens(["raw"], processing_tags={"flat"}).data == {}
+
+
+def test_normalize_column_key():
+    assert normalize_column_key("Easting") == "easting"
+    assert normalize_column_key("tile east") == "tile_east"
+    assert normalize_column_key("field-3") == "field_3"
+    assert normalize_column_key("3east") is None
+    assert normalize_column_key("") is None
+
+
+def test_dgm_gray_position_is_one_column_across_files():
+    """Clicking 458 binds the underscore field, so 505 in another file is the same column."""
+    paths = [
+        "Pfaffenweiler/dgm025_32_458_5322_1_bw_2022.tif",
+        "Pfaffenweiler/dgm025_32_460_5321_1_bw_2022.tif",
+        "Pfaffenweiler/dgm025_32_455_5323_1_bw_2022.tif",
+        "Pfaffenweiler/dgm025_32_458_5318_1_bw_2022.tif",
+        "Dusslingen/dgm025_32_505_5367_1_bw_2020.tif",
+        "Dusslingen/dgm025_32_508_5364_1_bw_2020.tif",
+    ]
+    sample = paths[0]
+    assert slot_at(sample, 0) == ("folder", 0)
+    east = slot_span(sample, "file", 2)
+    assert east is not None and sample[east[0] : east[1]] == "458"
+    assert slot_at(sample, east[0] - 1) is None
+    assert slot_at(sample, len(sample) - 1) is None
+    year = slot_span(sample, "file", 6)
+    assert year is not None and sample[year[0] : year[1]] == "2022"
+
+    rows = []
+    for rel in paths:
+        file_tokens = tokenize_string(Path(rel).stem)
+        parsed = parse_tokens(file_tokens, only_last_plain_digits_as_frame=True)
+        folder = rel.split("/")[0]
+        rows.append(
+            {
+                "relpath": rel,
+                "_folder_tokens": tokenize_string(folder),
+                "_file_tokens": file_tokens,
+                "_folder_token_to_key": {},
+                "_file_token_to_key": dict(parsed.token_to_key),
+                **parsed.data,
+            }
+        )
+    slots = {("folder", 0): "place", ("file", 2): "easting", ("file", 3): "northing"}
+    apply_slot_keys(rows, slots)
+    assert [r["place"] for r in rows] == [
+        "Pfaffenweiler",
+        "Pfaffenweiler",
+        "Pfaffenweiler",
+        "Pfaffenweiler",
+        "Dusslingen",
+        "Dusslingen",
+    ]
+    assert [r["easting"] for r in rows] == [458, 460, 455, 458, 505, 508]
+    assert [r["northing"] for r in rows] == [5322, 5321, 5323, 5318, 5367, 5364]
+    assert rows[0]["_folder_token_to_key"]["pfaffenweiler"] == "place"
+    assert rows[4]["_file_token_to_key"]["505"] == "easting"
+    assert rows[0]["_file_token_to_key"]["dgm025"] == "dgm"
+    assert rows[0]["_file_token_to_key"]["2022"] == "frame"
+    assert rows[5]["_file_token_to_key"]["2020"] == "frame"
+    assert "bw" not in rows[0]["_file_token_to_key"]
+    assert "32" not in rows[0]["_file_token_to_key"]
+    assert slot_keys_from_schema(slot_keys_to_schema(slots)) == slots
+    remove_slot_keys(rows, slots)
+    assert "easting" not in rows[0]
+    assert "505" not in rows[4]["_file_token_to_key"]
+    assert rows[0]["_file_token_to_key"]["2022"] == "frame"
+
+
+def _dgm_rows():
+    paths = [
+        "Pfaffenweiler/dgm025_32_458_5322_1_bw_2022.tif",
+        "Pfaffenweiler/dgm025_32_460_5321_1_bw_2022.tif",
+        "Pfaffenweiler/dgm025_32_455_5323_1_bw_2022.tif",
+        "Pfaffenweiler/dgm025_32_458_5318_1_bw_2022.tif",
+        "Dusslingen/dgm025_32_505_5367_1_bw_2020.tif",
+        "Dusslingen/dgm025_32_508_5364_1_bw_2020.tif",
+    ]
+    rows = []
+    for rel in paths:
+        file_tokens = tokenize_string(Path(rel).stem)
+        parsed = parse_tokens(file_tokens, only_last_plain_digits_as_frame=True)
+        folder = rel.split("/")[0]
+        rows.append(
+            {
+                "relpath": rel,
+                "_folder_tokens": tokenize_string(folder),
+                "_file_tokens": file_tokens,
+                "_folder_token_to_key": {},
+                "_file_token_to_key": dict(parsed.token_to_key),
+                **parsed.data,
+            }
+        )
+    return rows
+
+
+def test_varying_blocks_become_columns_constants_stay_gray():
+    rows = _dgm_rows()
+    slots = suggest_block_columns(rows)
+    assert slots == {
+        ("folder", 0): "folder_1",
+        ("file", 2): "field_3",
+        ("file", 3): "field_4",
+    }
+    apply_slot_keys(rows, slots)
+    assert rows[0]["folder_1"] == "Pfaffenweiler"
+    assert rows[4]["folder_1"] == "Dusslingen"
+    assert [r["field_3"] for r in rows] == [458, 460, 455, 458, 505, 508]
+    assert "field_2" not in rows[0] and "field_5" not in rows[0] and "field_6" not in rows[0]
+    assert rows[0]["dgm"] == 25
+    assert rows[0]["frame"] == 2022
+    assert rows[5]["frame"] == 2020
+    assert rows[0]["_file_token_to_key"]["2022"] == "frame"
+    assert rows[0]["_file_token_to_key"]["458"] == "field_3"
+    assert "32" not in rows[0]["_file_token_to_key"]
+    assert "bw" not in rows[0]["_file_token_to_key"]
+    again = suggest_block_columns(rows, ignore_keys=set(slots.values()))
+    assert again == slots
+    types = suggest_categorical_keys(rows)
+    assert types["folder_1"] is True
+    assert types["field_3"] is True
+    assert types["field_4"] is True
+    assert types["frame"] is True
+
+
+def test_more_than_ten_numbers_are_numeric_text_stays_category():
+    many = [{"n": i} for i in range(11)]
+    assert suggest_categorical_keys(many)["n"] is False
+    ten = [{"n": i} for i in range(10)]
+    assert suggest_categorical_keys(ten)["n"] is True
+    words = [{"place": f"place{i}"} for i in range(12)]
+    assert suggest_categorical_keys(words)["place"] is True

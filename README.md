@@ -13,7 +13,7 @@ Indexes folder and file names into a **SQLite** database — one row per file �
 **Step 4 — Detected keys**
 
 - **Used** — which keys become columns. None checked means all keys; any checked means only those.
-- **Cat** — store that column as TEXT so WOLKE shows a filter instead of a histogram (default when a key has fewer than 10 distinct values).
+- **Type** — Numeric or Category. A folder or underscore block that changes becomes a column (Category). More than 10 distinct numbers become Numeric. Category stores TEXT so WOLKE shows a filter instead of a histogram. A block that is the same in every file stays gray. The dropdown overrides the suggestion.
 - **Uniques** — distinct values in the current file set.
 - **Full** — how many files have the key; `(−N)` means N files are missing it.
 

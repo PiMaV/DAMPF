@@ -13,7 +13,13 @@ from pathlib import Path
 
 from dampf.indexer import (
     DEFAULT_ALLOWED_SUFFIXES,
+    apply_slot_keys,
+    remove_slot_keys,
     run_indexer,
+    slot_keys_from_schema,
+    slot_keys_to_schema,
+    slot_span,
+    suggest_block_columns,
     suggest_nomenclature,
     suggest_categorical_keys,
     build_column_metadata,
@@ -686,6 +692,8 @@ class DampfGui(QMainWindow):
         self._last_sample_rows: list = []
         self._legend_key_order: list = []
         self.custom_token_map: dict[str, str] = {}
+        # (kind, index) → column key. kind is "folder" or "file"; index is the path position.
+        self.slot_keys: dict[tuple[str, int], str] = {}
         self.token_patterns: list[dict] = []
         self._refreshing_unrec_panel = False
 
@@ -864,7 +872,7 @@ class DampfGui(QMainWindow):
         struct_g = QGroupBox("4. Detected keys (0 files)")
         self.struct_g = struct_g
         struct_g.setToolTip(
-            "Parameters from filenames. Used = export column; Cat = store as TEXT for WOLKE filters; "
+            "Parameters from filenames. Used = export column; Type = Numeric or Category; "
             "Uniques/Full = coverage; SI exp scales units. Hover column headers for details."
         )
         struct_g.setStyleSheet("QGroupBox { font-size: 12px; padding-top: 8px; }")
@@ -894,25 +902,28 @@ class DampfGui(QMainWindow):
         detected_keys_label = QLabel("Detected keys (double-click Display name to edit):")
         detected_keys_label.setToolTip(
             "Parameters from filenames. Display name = label in exports (double-click to edit). Key = internal name (read-only). "
-            "Hover column headers for Used, Cat, Uniques, Full, and unit columns."
+            "Hover column headers for Used, Type, Uniques, Full, and unit columns."
         )
         keys_top_ll.addWidget(detected_keys_label)
         self.key_tree = QTreeWidget()
         self.key_tree.setHeaderLabels(
-            ["Used", "Cat", "Uniques", "Full", "Display name", "Key", "SI exp", "Unit", "Min", "Max", "Mean"]
+            ["Used", "Type", "Uniques", "Full", "Display name", "Key", "SI exp", "Unit", "Min", "Max", "Mean"]
         )
         self.key_tree.setMinimumHeight(150)
         self.key_tree.setMaximumHeight(380)  # cap so layout stays stable; scroll when more keys
         self.key_tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.key_tree.setColumnWidth(0, 50)
-        self.key_tree.setColumnWidth(1, 50)
+        self.key_tree.setColumnWidth(1, 110)
         self.key_tree.setColumnWidth(4, 180)
         self.key_tree.setColumnWidth(5, 80)
         self.key_tree.setStyleSheet("font-size: 11px;")
         _key_header_tips = [
             "Include this key as a column in SQLite / CSV / JSONL. None checked: export all keys. One or more checked: only those.",
-            "Checked: write column as TEXT so WOLKE shows a filter (not a histogram). Default on when fewer than 10 distinct values. WOLKE sorts TEXT as text (1, 10, 2).",
-            "Number of distinct values in the current file set. Drives defaults: Used when >1, Cat when <10.",
+            "Numeric: number column (histogram in WOLKE). Category: TEXT filter list. "
+            "A block that changes is Category. More than 10 distinct numbers become Numeric. "
+            "The dropdown overrides that.",
+            "Number of distinct values in the current file set. Used when more than 1. "
+            "Type is Numeric when more than 10 distinct values are numbers.",
             "How many files have this key. (−N) = files missing it.",
             "Label used in exports. Double-click to edit.",
             "Internal key name (read-only).",
@@ -926,7 +937,7 @@ class DampfGui(QMainWindow):
         for col, tip in enumerate(_key_header_tips):
             header_item.setToolTip(col, tip)
         self.key_tree.setToolTip(
-            "Used = include in export. Cat = TEXT for WOLKE filters. Uniques / Full = coverage. "
+            "Used = include in export. Type = Numeric or Category. Uniques / Full = coverage. "
             "Hover a column header for details."
         )
         self.key_tree.itemSelectionChanged.connect(self._on_tree_select)
@@ -976,7 +987,8 @@ class DampfGui(QMainWindow):
         self.path_overview.setFontFamily("Consolas")
         self.path_overview.setStyleSheet("font-size: 10px; padding: 4px;")
         self.path_overview.setToolTip(
-            "Full path: recognized (colored) + unrecognized (gray). Complete information space visible. Verify extraction before saving."
+            "Colored stretches are columns. Gray means that folder or underscore block is the same in every file. "
+            "A block that changes becomes a column on its own: Category, or Numeric when more than 10 distinct numbers."
         )
         results_l.addWidget(self.path_overview, 1)
         self.key_samples_label = QLabel("")
@@ -1959,7 +1971,22 @@ class DampfGui(QMainWindow):
                 pass
         QTimer.singleShot(200, self._poll_queue)
 
+    def _sync_block_columns(self) -> None:
+        """Varying folder parts and `_` fields become columns. Constant blocks stay gray."""
+        rows = getattr(self, "rows", None) or []
+        new_slots = suggest_block_columns(rows, ignore_keys=set(self.slot_keys.values()))
+        if new_slots == self.slot_keys:
+            for key in new_slots.values():
+                self.key_display_names.setdefault(key, key)
+            return
+        remove_slot_keys(self._all_rows, self.slot_keys)
+        self.slot_keys = new_slots
+        apply_slot_keys(self._all_rows, self.slot_keys)
+        for key in new_slots.values():
+            self.key_display_names.setdefault(key, key)
+
     def _show_nomenclature(self) -> None:
+        self._sync_block_columns()
         sugg = suggest_nomenclature(self.rows)
         detected = sugg["detected_fields"]
         root = self.root_edit.text().strip() or None
@@ -2090,7 +2117,7 @@ class DampfGui(QMainWindow):
             default_used = u > 1
             is_used = self.key_is_used.get(key, default_used)
             self.key_is_used[key] = is_used
-            default_cat = u < 10
+            default_cat = self._suggested_categorical.get(key, True)
             is_cat = self.key_is_categorical.get(key, default_cat)
             self.key_is_categorical[key] = is_cat
             si_exp = self.key_si_scale.get(key)
@@ -2113,14 +2140,22 @@ class DampfGui(QMainWindow):
             item.setData(7, Qt.ItemDataRole.UserRole, raw_u)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
             item.setCheckState(0, Qt.CheckState.Checked if is_used else Qt.CheckState.Unchecked)
-            item.setCheckState(1, Qt.CheckState.Checked if is_cat else Qt.CheckState.Unchecked)
+            type_combo = QComboBox()
+            type_combo.addItem("Numeric")
+            type_combo.addItem("Category")
+            type_combo.setCurrentIndex(1 if is_cat else 0)
+            type_combo.currentIndexChanged[int].connect(
+                lambda idx, k=key: self._on_type_changed(k, idx)
+            )
             bg = key_to_color.get(key)
             if bg:
                 item.setBackground(5, QBrush(QColor(bg)))
             self.key_tree.addTopLevelItem(item)
+            self.key_tree.setItemWidget(item, 1, type_combo)
         self.key_tree.blockSignals(False)
         for c in range(self.key_tree.columnCount()):
             self.key_tree.resizeColumnToContents(c)
+        self.key_tree.setColumnWidth(1, max(110, self.key_tree.columnWidth(1)))
 
     def _on_key_tree_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
         key = item.data(5, Qt.ItemDataRole.UserRole)
@@ -2128,8 +2163,6 @@ class DampfGui(QMainWindow):
             return
         if column == 0:
             self.key_is_used[key] = item.checkState(0) == Qt.CheckState.Checked
-        elif column == 1:
-            self.key_is_categorical[key] = item.checkState(1) == Qt.CheckState.Checked
         elif column == 4:
             display_name = item.text(4).strip()
             self.key_display_names[key] = display_name or key
@@ -2218,13 +2251,17 @@ class DampfGui(QMainWindow):
                 out.append(key)
         return out if out else None
 
+    def _on_type_changed(self, key: str, index: int) -> None:
+        """Type dropdown: 0 Numeric, 1 Category (TEXT for WOLKE filters)."""
+        self.key_is_categorical[key] = index == 1
+
     def _get_categorical_keys(self) -> list:
-        """Return keys checked Cat (TEXT for WOLKE filters). Defaults seeded in _refresh_key_tree."""
+        """Return keys set to Category (TEXT for WOLKE filters). Defaults seeded in _refresh_key_tree."""
         out: list = []
         for i in range(self.key_tree.topLevelItemCount()):
             item = self.key_tree.topLevelItem(i)
             key = item.data(5, Qt.ItemDataRole.UserRole)
-            if key and item.checkState(1) == Qt.CheckState.Checked:
+            if key and self.key_is_categorical.get(key):
                 out.append(key)
         return out
 
@@ -2336,6 +2373,8 @@ class DampfGui(QMainWindow):
         if not getattr(self, "_effective_rows", None):
             if getattr(self, "path_overview", None):
                 self.path_overview.clear()
+            self._path_overview_lines = []
+            self._path_overview_segs = []
             return
         rows = list(self._effective_rows)
         if getattr(self, "outlier_only_cb", None) and self.outlier_only_cb.isChecked() and getattr(self, "_outlier_relpaths", None):
@@ -2363,6 +2402,8 @@ class DampfGui(QMainWindow):
     def _fill_path_overview(self, rows: list) -> None:
         """Show multiple paths with parameter colors, one per line."""
         self.path_overview.clear()
+        self._path_overview_lines = []
+        self._path_overview_segs = []
         detected = getattr(self, "_last_detected_keys", None) or []
         if not rows:
             if detected:
@@ -2400,6 +2441,13 @@ class DampfGui(QMainWindow):
             offset_file = len(folder_str) + len(sep) if folder_str else 0
             segs = [(s, e, k, True) for s, e, k in folder_seg]
             segs.extend((offset_file + s, offset_file + e, k, False) for s, e, k in file_seg)
+            for (kind, index), key in getattr(self, "slot_keys", {}).items():
+                span = slot_span(rel, kind, index)
+                if span is None:
+                    continue
+                if any(s < span[1] and e > span[0] for s, e, _k, _f in segs):
+                    continue
+                segs.append((span[0], span[1], key, kind == "folder"))
             segs_per_line.append(segs)
             dup_per_line.append(set(keys_dup))
         legend_order = getattr(self, "_legend_key_order", None) or ordered
@@ -2414,6 +2462,8 @@ class DampfGui(QMainWindow):
         self.color_legend.setToolTip(
             "Pseudo-path from actual paths. Key names; (key) = key not in all paths. Colors = parameter."
         )
+        self._path_overview_lines = lines
+        self._path_overview_segs = [[(s, e, k) for s, e, k, _f in segs] for segs in segs_per_line]
         full = "\n".join(lines)
         self.path_overview.setPlainText(full)
         cursor = self.path_overview.textCursor()
@@ -2479,6 +2529,7 @@ class DampfGui(QMainWindow):
         if isinstance(schema.get("key_is_used"), dict):
             self.key_is_used = {k: bool(v) for k, v in schema["key_is_used"].items()}
             loaded.append("used flags")
+        rows_dirty = False
         ctm = schema.get("custom_token_map")
         if isinstance(ctm, dict):
             for tok, key in list(self.custom_token_map.items()):
@@ -2490,10 +2541,17 @@ class DampfGui(QMainWindow):
                             del ttk[tok]
             self.custom_token_map = dict(ctm)
             loaded.append(f"{len(self.custom_token_map)} token mappings")
-            if self._all_rows:
-                _apply_custom_token_map(self._all_rows, self.custom_token_map)
-                self.rows = filter_rows_by_folder_includes(self._get_ext_filtered_rows(), self._folder_includes)
-                self._show_nomenclature()
+            rows_dirty = True
+        if "slot_keys" in schema:
+            remove_slot_keys(self._all_rows, self.slot_keys)
+            self.slot_keys = slot_keys_from_schema(schema.get("slot_keys"))
+            loaded.append(f"{len(self.slot_keys)} position columns")
+            rows_dirty = True
+        if rows_dirty and self._all_rows:
+            _apply_custom_token_map(self._all_rows, self.custom_token_map)
+            apply_slot_keys(self._all_rows, self.slot_keys)
+            self.rows = filter_rows_by_folder_includes(self._get_ext_filtered_rows(), self._folder_includes)
+            self._show_nomenclature()
             self._refresh_unrecognized_panel()
         tp = schema.get("token_patterns")
         if isinstance(tp, list):
@@ -2560,6 +2618,7 @@ class DampfGui(QMainWindow):
                   "key_display_names": key_display_names_export, "key_categories": self.key_categories,
                   "key_is_categorical": dict(self.key_is_categorical), "key_is_used": dict(self.key_is_used),
                   "custom_token_map": dict(self.custom_token_map),
+                  "slot_keys": slot_keys_to_schema(self.slot_keys),
                   "token_patterns": list(getattr(self, "token_patterns", []) or [])}
         try:
             t0 = time.perf_counter()

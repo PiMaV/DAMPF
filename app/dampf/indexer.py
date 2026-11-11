@@ -745,17 +745,33 @@ def suggest_nomenclature(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"detected_fields": detected_fields}
 
 
+def _as_plain_number(v: Any) -> Optional[float]:
+    """int/float or a number+unit value. None for text, lists, and bools."""
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if is_quantitative_val(v):
+        val = v.get("val")
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            return None
+        return float(val)
+    return None
+
+
 def suggest_categorical_keys(
     rows: List[Dict[str, Any]], threshold: int = 10
 ) -> Dict[str, bool]:
     """
-    Suggest which keys to treat as categorical for WOLKE (container/filter instead of histogram).
-    Rule of thumb: fewer than `threshold` distinct values -> suggest categorical.
-    Returns dict: key -> True (categorical) or False (numeric). Only keys that appear in data.
+    Suggest Category (True) or Numeric (False) for WOLKE.
+
+    A key is Numeric only when every value is a number and there are more than
+    `threshold` distinct values. Text, and shorter number lists, stay Category.
     """
     if not rows:
         return {}
     distinct: Dict[str, set] = {}
+    numeric_only: Dict[str, bool] = {}
     for r in rows:
         for k in r:
             if k in _ROW_META_KEYS:
@@ -763,15 +779,230 @@ def suggest_categorical_keys(
             v = r.get(k)
             if v is None:
                 continue
-            # Normalise for distinct count (hashable string)
-            if isinstance(v, (list, dict)):
+            number = _as_plain_number(v)
+            numeric_only[k] = numeric_only.get(k, True) and number is not None
+            if isinstance(v, (list, dict)) and number is None:
                 norm = json.dumps(v, sort_keys=True, default=str)
             else:
                 norm = str(v)
             distinct.setdefault(k, set()).add(norm)
     out: Dict[str, bool] = {}
     for k, vals in distinct.items():
-        out[k] = len(vals) < threshold
+        # More than `threshold` distinct numbers → Numeric. Text stays Category.
+        # A single repeated value is still Category when the caller keeps the column.
+        many_numbers = numeric_only.get(k, False) and len(vals) > threshold
+        out[k] = not many_numbers
+    return out
+
+
+_COLUMN_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def normalize_column_key(name: str) -> Optional[str]:
+    """Column name for a user-picked path position. None when it cannot be a key."""
+    s = name.strip().lower().replace("-", "_")
+    s = re.sub(r"\s+", "_", s)
+    if not _COLUMN_KEY_RE.fullmatch(s):
+        return None
+    return s
+
+
+def _path_sep(relpath: str) -> str:
+    return "\\" if "\\" in relpath else "/"
+
+
+def _folder_and_file(relpath: str) -> Tuple[List[str], str]:
+    if not relpath:
+        return [], ""
+    parts = relpath.split(_path_sep(relpath))
+    if not parts:
+        return [], ""
+    return parts[:-1], parts[-1]
+
+
+def file_underscore_fields(filename: str) -> List[str]:
+    """Filename stem split on `_`. The extension is not a field."""
+    if "." in filename:
+        stem = filename.rsplit(".", 1)[0]
+    else:
+        stem = filename
+    if stem == "":
+        return []
+    return stem.split("_")
+
+
+def slot_span(relpath: str, kind: str, index: int) -> Optional[Tuple[int, int]]:
+    """Character span of one folder part or one `_` field in a relative path. None if missing."""
+    if index < 0:
+        return None
+    sep = _path_sep(relpath)
+    folders, filename = _folder_and_file(relpath)
+    if kind == "folder":
+        if index >= len(folders):
+            return None
+        pos = 0
+        for i, part in enumerate(folders):
+            if i == index:
+                return pos, pos + len(part)
+            pos += len(part) + len(sep)
+        return None
+    if kind != "file":
+        return None
+    fields = file_underscore_fields(filename)
+    if index >= len(fields):
+        return None
+    pos = sum(len(p) + len(sep) for p in folders)
+    for i, field in enumerate(fields):
+        if i == index:
+            return pos, pos + len(field)
+        pos += len(field) + 1
+    return None
+
+
+def slot_at(relpath: str, offset: int) -> Optional[Tuple[str, int]]:
+    """Folder part or filename `_` field containing this character. Separators and the extension are None."""
+    folders, filename = _folder_and_file(relpath)
+    for i in range(len(folders)):
+        span = slot_span(relpath, "folder", i)
+        if span and span[0] <= offset < span[1]:
+            return ("folder", i)
+    for i in range(len(file_underscore_fields(filename))):
+        span = slot_span(relpath, "file", i)
+        if span and span[0] <= offset < span[1]:
+            return ("file", i)
+    return None
+
+
+def coerce_slot_value(raw: str) -> Any:
+    """Plain number → int/float so Numeric export keeps a number. Anything else stays the path text."""
+    num = _plain_number(raw)
+    if num is not None:
+        return num
+    return raw
+
+
+def apply_slot_keys(rows: List[Dict[str, Any]], slot_keys: Dict[Tuple[str, int], str]) -> None:
+    """Write one column per path position. Same `_` field or folder part across every row.
+
+    Does not replace a token that already belongs to a parsed key (for example `frame`).
+    """
+    if not slot_keys:
+        return
+    for row in rows:
+        rel = str(row.get("relpath") or "")
+        for (kind, index), key in slot_keys.items():
+            span = slot_span(rel, kind, index)
+            if span is None:
+                continue
+            raw = rel[span[0] : span[1]]
+            if raw == "":
+                continue
+            row[key] = coerce_slot_value(raw)
+            if kind == "folder":
+                ttk = row.setdefault("_folder_token_to_key", {})
+            else:
+                ttk = row.setdefault("_file_token_to_key", {})
+            if not isinstance(ttk, dict):
+                continue
+            for tok in tokenize_string(raw):
+                if tok not in ttk:
+                    ttk[tok] = key
+
+
+def remove_slot_keys(rows: List[Dict[str, Any]], slot_keys: Dict[Tuple[str, int], str]) -> None:
+    """Drop columns previously added by apply_slot_keys."""
+    keys = {k for k in slot_keys.values() if k}
+    if not keys:
+        return
+    for row in rows:
+        for key in keys:
+            row.pop(key, None)
+        for name in ("_folder_token_to_key", "_file_token_to_key"):
+            ttk = row.get(name)
+            if not isinstance(ttk, dict):
+                continue
+            for tok, key in list(ttk.items()):
+                if key in keys:
+                    del ttk[tok]
+
+
+def slot_keys_to_schema(slot_keys: Dict[Tuple[str, int], str]) -> List[Dict[str, Any]]:
+    return [
+        {"kind": kind, "index": index, "key": key}
+        for (kind, index), key in sorted(slot_keys.items(), key=lambda item: (item[0][0], item[0][1], item[1]))
+    ]
+
+
+def slot_keys_from_schema(data: Any) -> Dict[Tuple[str, int], str]:
+    out: Dict[Tuple[str, int], str] = {}
+    if not isinstance(data, list):
+        return out
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        index = item.get("index")
+        key = item.get("key")
+        if kind in ("folder", "file") and isinstance(index, int) and index >= 0 and isinstance(key, str) and key:
+            out[(kind, index)] = key
+    return out
+
+
+def suggest_block_columns(
+    rows: List[Dict[str, Any]],
+    ignore_keys: Optional[set] = None,
+) -> Dict[Tuple[str, int], str]:
+    """One column per folder part or filename `_` field that is not already parsed and not constant.
+
+    Constant blocks stay unrecognized (gray). A block the parser already owns
+    (`dgm025` → `dgm`, trailing year → `frame`) is left alone.
+    `ignore_keys` are columns this function added earlier, so a second pass keeps the same names.
+    Names are `folder_1`, `field_3`, counted from 1 in path order.
+    """
+    ignore = set(ignore_keys or ())
+    values: Dict[Tuple[str, int], set] = {}
+    owned: Dict[Tuple[str, int], bool] = {}
+    for row in rows:
+        rel = str(row.get("relpath") or "")
+        folders, filename = _folder_and_file(rel)
+        specs: List[Tuple[str, int, str, Dict[str, str]]] = []
+        folder_ttk = row.get("_folder_token_to_key") or {}
+        file_ttk = row.get("_file_token_to_key") or {}
+        for index, raw in enumerate(folders):
+            specs.append(("folder", index, raw, folder_ttk if isinstance(folder_ttk, dict) else {}))
+        for index, raw in enumerate(file_underscore_fields(filename)):
+            specs.append(("file", index, raw, file_ttk if isinstance(file_ttk, dict) else {}))
+        for kind, index, raw, ttk in specs:
+            if raw == "":
+                continue
+            slot = (kind, index)
+            values.setdefault(slot, set()).add(raw)
+            tokens = tokenize_string(raw)
+            is_owned = bool(tokens) and all(
+                ttk.get(tok) is not None and ttk.get(tok) not in ignore for tok in tokens
+            )
+            owned[slot] = owned.get(slot, True) and is_owned
+    occupied = {
+        k
+        for row in rows
+        for k in row
+        if isinstance(k, str) and k not in _ROW_META_KEYS and not k.startswith("_") and k not in ignore
+    }
+    out: Dict[Tuple[str, int], str] = {}
+    for slot in sorted(values, key=lambda item: (0 if item[0] == "folder" else 1, item[1])):
+        if owned.get(slot, False):
+            continue
+        if len(values[slot]) <= 1:
+            continue
+        kind, index = slot
+        base = f"folder_{index + 1}" if kind == "folder" else f"field_{index + 1}"
+        name = base
+        n = 2
+        while name in occupied or name in out.values():
+            name = f"{base}_{n}"
+            n += 1
+        out[slot] = name
+        occupied.add(name)
     return out
 
 
