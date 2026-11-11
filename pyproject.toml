@@ -2,7 +2,7 @@
 name = "dampf"
 version = "1.1.0"
 description = "DAMPF - Filename Semantic Indexer (GUI)"
-readme = "README.MD"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "PyQt6>=6.4",

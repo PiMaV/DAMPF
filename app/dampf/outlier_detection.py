@@ -1,5 +1,4 @@
 # outlier_detection.py - Detect paths that deviate from schema or contain likely typos in folder names.
-# See docs/Strategy_Unrecognized_and_Messy_Data.md Phase 3.
 
 from __future__ import annotations
 

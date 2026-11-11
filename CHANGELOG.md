@@ -11,12 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Docs pared to README, English naming convention + cheat sheet, and `docs/llm-brief.md`; planning essays and duplicate runbooks removed.
 - GitHub Release binaries use branded, versioned names: `DAMPF-vX.Y.Z.exe` (Windows) and `DAMPF-vX.Y.Z-linux-x86_64` (glibc/x86_64; built on Ubuntu).
-- Naming docs list `=` as the explicit column form (`plasma=on`, `target=metal-grounded`). A hyphenated name alone does not create a column.
+- Naming docs (English + cheat sheet) state the three characters: `_` separates, `-` stays in the name, `=` names the column. WOLKE sees the SQLite name, with `-` written as `_`.
 
 ### Fixed
 
+- Crawl no longer creates the output folder. A Windows path kept in local `dampf.ini` was created as a real directory on Linux (the whole `C:\…\_index` string as one folder name in the working directory) on every crawl.
 - Indexer follows the naming schema: `_` separates parameters, `-` stays inside one name. `plasma-on` is one token; `2024-02-07` stays a date; a number+unit inside a hyphenated name (`Slit-0p5mm`, `150us-Exposure`) is still read.
+- `name=value` stays one parameter. `voltage=4kV` and `temp=22p5` are read as numbers; `c-set=001` and `target-material=glass` are valid names. There is no 17-character cap. SQLite writes a `-` in the column name as `_`.
 - Include-folders (#3): unchecking a parent now cascades to children; step 4 file counts refresh; empty selection no longer silently re-includes everything. Title shows how many files are selected. Checkbox clicks are on/off only (partial is display-only when children differ).
 
 ### Removed

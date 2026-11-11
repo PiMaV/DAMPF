@@ -952,7 +952,7 @@ class DampfGui(QMainWindow):
         unrec_g = QGroupBox("Unrecognized \u2192 Parameters")
         unrec_g.setToolTip(
             "Gray = tokens the schema does not know. Promote them here: Token → Key. "
-            "Example: SyncK, SyncAA → sync_mode. See docs/Pattern_Library.md for suggestions. No re-crawl."
+            "Example: SyncK, SyncAA → sync_mode. No re-crawl."
         )
         unrec_l = QVBoxLayout(unrec_g)
         unrec_l.setSpacing(4)
