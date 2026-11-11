@@ -8,7 +8,7 @@ Conventions for paths and filenames; the **DAMPF Indexer** ([../../app/dampf/ind
 
 ## Quick Start (4 Rules)
 
-1. **Separators:** `_` (underscore) or `-` (dash), never spaces
+1. **Separators:** `_` (underscore) or a new folder separates parameters. `-` (dash) stays inside one name (`plasma-on`, `Slit-0p5mm`). Never spaces.
 2. **Unit directly to number** (no space): `4kV`, `10us`, `0p2us`
 3. **Decimal:** `p` preferred (0p2us), dot `.` also supported (0.2us)
 4. **Example:** `2024-02-07_run1_4kV_10us_001.png` → date, run, voltage, exposure, frame
@@ -33,6 +33,9 @@ Conventions for paths and filenames; the **DAMPF Indexer** ([../../app/dampf/ind
 | Unit to number | directly, no space | 4kV, 10us, 0p2us |
 | Decimal point | p preferred, . supported | 0p2us or 0.2us |
 | Inner separation | - (dash/minus) | 2024-06-21 or Slit-0p5mm |
+| Explicit column | = | plasma=on, target=metal-grounded |
+
+The indexer follows this: `_` and the path start a new parameter, `-` does not. A hyphenated token stays one token. A number+unit inside it is still read (`Slit-0p5mm`, `150us-Exposure`); the words beside it are not extra keys (`plasma-on`). `=` sets the column name. The key is one word of letters and digits (max 17 characters). The value may contain `-` (`target=metal-grounded`).
 
 ---
 
@@ -46,6 +49,7 @@ You can write parameters **implicitly** (short) or **explicitly** (unambiguous):
 | **Explicit** | `voltage=4kV_exposure=10us_frame=001.png` | You name each value directly |
 
 **When to use explicit?**
+- Text with no unit, when the column name must be fixed: `plasma=on`, `target=glass`, `target=metal-grounded`. `plasma-on` alone is a name, not a column.
 - Custom parameters: `sample=ABC123`, `operator=john`, `batch=7`
 - Disambiguation: `temp=22p5` instead of just `22p5` (no confusion with current)
 - When implicit recognition does not apply
@@ -80,9 +84,10 @@ Both work; explicit is always unambiguous, implicit is shorter.
 | Number+letter(s) | 300He, 300N2 | key=value; He/N2/CO2 = gas % |
 | Flow (slm) | 5slmAr, 10slmN2 | gas_flow (val, unit=slm, gas) |
 | Letters only (2–4) | FF, KPSc | string param key=value |
+| Hyphen inside a name | plasma-on, Slit-0p5mm, 150us-Exposure | one token; number+unit inside is read; the words are not extra keys |
 | Frame (digits only) | 000, 001, 040, 165, 07 | frame (integer; plain digits at end of filename) |
 | Camera/Channel | cam1, channel2, C1, C2, C3 | camera, channel |
-| key=value | arbitrary | stored as key-value |
+| key=value | plasma=on, target=metal-grounded | key is the column name, the rest is the value (may contain `-`) |
 | Processing tags | raw, dark, flat, avg, … | processing (list) |
 | Modality | rgb, ir, thermal, … | modality (via MODALITY_MAP) |
 

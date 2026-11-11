@@ -8,7 +8,7 @@ One-page quick reference. Full docs: [Proper_file_naming_EN.md](Proper_file_nami
 
 | # | Rule | Example |
 |---|------|---------|
-| 1 | Separators: `_` or `-`, never space | `4kV_10us` or `Slit-0p5mm` |
+| 1 | `_` or a folder separates parameters. `-` stays inside one name. Never space. | `4kV_10us`, `plasma-on`, `Slit-0p5mm` |
 | 2 | Unit directly to number (no space) | `4kV`, `10us`, `0p2us` |
 | 3 | Decimal: `p` preferred, `.` supported | `0p2us` or `0.2us` |
 | 4 | Example | `2024-02-07_run1_4kV_10us_001.png` |
@@ -22,6 +22,7 @@ One-page quick reference. Full docs: [Proper_file_naming_EN.md](Proper_file_nami
 | Parameter separation | `_` or path | `4kV_10us` |
 | Decimal | `p` or `.` | `0p2us`, `4.2kv` |
 | Inner separation | `-` | `2024-02-07`, `Slit-0p5mm` |
+| Explicit column | `=` | `plasma=on`, `target=metal-grounded` |
 
 ---
 
@@ -47,7 +48,7 @@ One-page quick reference. Full docs: [Proper_file_naming_EN.md](Proper_file_nami
 | **Implicit** | `4kV_10us_001.png` |
 | **Explicit** | `voltage=4kV_exposure=10us_frame=001.png` |
 
-Use explicit for custom params: `sample=ABC123`, `temp=22p5`
+Use explicit when the column name must be fixed, including text with no unit: `plasma=on`, `target=metal-grounded`, `sample=ABC123`, `temp=22p5`. The key is one word (letters and digits, max 17). The value may contain `-`. `plasma-on` alone is a name, not a column.
 
 ---
 

@@ -20,8 +20,9 @@ uv run python scripts/build_exe.py
 
 Ausgabe:
 
-* **Windows:** `dist/DAMPF.exe`
-* **Linux:** `dist/DAMPF` (Release-Workflow benennt zu `DAMPF-linux-x86_64` um)
+* **Windows (lokal):** `dist/DAMPF.exe`
+* **Linux (lokal):** `dist/DAMPF`
+* **GitHub Release:** `DAMPF-vX.Y.Z.exe` / `DAMPF-vX.Y.Z-linux-x86_64` (Brand CAPS + full tag)
 
 Das Fenster-Icon kommt aus `icon/` (wird im Code ueber `window.setWindowIcon(QIcon(str(p)))` gesetzt).
 

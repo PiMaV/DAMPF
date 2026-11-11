@@ -1,6 +1,6 @@
 # Push und Release
 
-**Branch:** nur `main`. **GitHub Actions:** Push auf `main` startet **CI** (`pytest`, Linux). Push eines Tags `v*` startet **Release** (Windows-`DAMPF.exe` und Linux-`DAMPF-linux-x86_64`). Binary-Build **nur** ueber Tag-Push, nicht ueber normalen Branch-Push.
+**Branch:** nur `main`. **GitHub Actions:** Push auf `main` startet **CI** (`pytest`, Linux). Push eines Tags `v*` startet **Release** (versionierte Binaries, Brand **DAMPF** in CAPS). Binary-Build **nur** ueber Tag-Push, nicht ueber normalen Branch-Push.
 
 ---
 
@@ -48,8 +48,8 @@ git push origin v0.2.0
 
 Auf GitHub **Actions** → **Release** abwarten (Jobs `build-windows-exe` und `build-linux-binary`), dann **Releases**:
 
-* `DAMPF.exe` — Windows
-* `DAMPF-linux-x86_64` — Ubuntu/Linux x86_64 (ausfuehrbar machen: `chmod +x DAMPF-linux-x86_64`)
+* `DAMPF-vX.Y.Z.exe` — Windows
+* `DAMPF-vX.Y.Z-linux-x86_64` — Linux x86_64 / glibc (built on Ubuntu; typical openSUSE/Fedora/Debian class — not Alpine/musl) (`chmod +x …`)
 
 **Tag/Repair:** `git tag -d v0.2.0`. Auf GitHub Release und Tag loeschen, dann erneut taggen/pushen.
 

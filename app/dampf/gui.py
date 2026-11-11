@@ -110,6 +110,26 @@ def _build_folder_tree(rows: list) -> tuple[dict[str, int], dict[str, dict[str, 
     return by_folder, by_folder_ext
 
 
+def filter_rows_by_folder_includes(rows: list, included: set[str] | None) -> list:
+    """Filter rows by included folder paths.
+
+    None = no folder filter (all rows). Empty set = nothing selected.
+    Non-empty = row folder equals an included path or is under one.
+    """
+    if included is None:
+        return list(rows)
+    if not included:
+        return []
+    out = []
+    for r in rows:
+        folder = str(Path(r.get("relpath", "")).parent).replace("\\", "/") if r.get("relpath") else ""
+        if folder == ".":
+            folder = ""
+        if any(folder == p or folder.startswith(p + "/") for p in included):
+            out.append(r)
+    return out
+
+
 _ROW_META_KEYS = frozenset(
     {"path", "relpath", "ext", "stem", "tokens", "trace", "recognized", "total_tokens",
      "confidence", "_duplicate_keys", "_folder_tokens", "_file_tokens", "_folder_token_to_key", "_file_token_to_key"}
@@ -527,7 +547,8 @@ class DampfGui(QMainWindow):
         self.rows: list = []
         self._all_rows: list = []  # all crawled files (all types)
         self._ext_filter: str | None = None  # None = all, ".tif" = only tif
-        self._folder_includes: set[str] = set()  # folder paths to include (empty = all)
+        self._folder_includes: set[str] | None = None  # None = all; empty set = none; else selected paths
+        self._folder_check_updating = False
         self.current_config: dict = {}
         self.key_display_names: dict = {}
         self.key_categories: dict = {}
@@ -1382,6 +1403,10 @@ class DampfGui(QMainWindow):
                 files_str = "0"
             count_selected = sum(exts_here.values()) if ext_filter is None else exts_here.get(ext_filter, 0)
             item = QTreeWidgetItem([str(idx), "", name, files_str])
+            # Checkable only — do NOT set ItemIsUserTristate (that makes clicks cycle
+            # checked → partial → unchecked). Partial is set programmatically on parents
+            # when children are mixed.
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setData(2, Qt.ItemDataRole.UserRole, path)
             item.setCheckState(1, Qt.CheckState.Checked if count_selected > 0 else Qt.CheckState.Unchecked)
             if parent_item:
@@ -1394,7 +1419,7 @@ class DampfGui(QMainWindow):
         self._prefix_ext = prefix_ext
         self._prefix_count = prefix_count
         has_subfolders = len(all_paths) > 1 or any("/" in p for p in all_paths)
-        self.folder_tree_g.setTitle("3. Include folders (uncheck to exclude, changes apply immediately)")
+        self._update_folder_tree_title(None)
         if not has_subfolders:
             info_item = QTreeWidgetItem(["", "", "", "No subfolders, all files in root"])
             info_item.setFlags(info_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
@@ -1408,29 +1433,88 @@ class DampfGui(QMainWindow):
         self._folder_tree_ready = True
         self._apply_folder_selection()
 
+    def _update_folder_tree_title(self, selected_count: int | None) -> None:
+        """Show selected file count so checkbox changes feel immediate."""
+        if selected_count is None:
+            self.folder_tree_g.setTitle(
+                "3. Include folders (uncheck to exclude, changes apply immediately)"
+            )
+            return
+        self.folder_tree_g.setTitle(
+            f"3. Include folders ({_fmt_count(selected_count)} selected — changes apply immediately)"
+        )
+
+    def _set_folder_check_recursive(self, item: QTreeWidgetItem, state: Qt.CheckState) -> None:
+        item.setCheckState(1, state)
+        for i in range(item.childCount()):
+            self._set_folder_check_recursive(item.child(i), state)
+
+    def _sync_folder_parent_check(self, parent: QTreeWidgetItem) -> None:
+        """Parent reflects children: all / none / partial."""
+        n = parent.childCount()
+        if n <= 0:
+            return
+        checked = 0
+        unchecked = 0
+        for i in range(n):
+            st = parent.child(i).checkState(1)
+            if st == Qt.CheckState.Checked:
+                checked += 1
+            elif st == Qt.CheckState.Unchecked:
+                unchecked += 1
+        if checked == n:
+            parent.setCheckState(1, Qt.CheckState.Checked)
+        elif unchecked == n:
+            parent.setCheckState(1, Qt.CheckState.Unchecked)
+        else:
+            parent.setCheckState(1, Qt.CheckState.PartiallyChecked)
+
     def _on_folder_check_changed(self, item: QTreeWidgetItem, column: int) -> None:
         if column != 1:
             return
         if not getattr(self, "_folder_tree_ready", False):
             return
-        self._apply_folder_selection()
+        if getattr(self, "_folder_check_updating", False):
+            return
+        # Cascade parent → children; then bubble parent states so the tree matches selection.
+        self._folder_check_updating = True
+        self.folder_tree_w.blockSignals(True)
+        try:
+            state = item.checkState(1)
+            if state != Qt.CheckState.PartiallyChecked:
+                for i in range(item.childCount()):
+                    self._set_folder_check_recursive(item.child(i), state)
+            parent = item.parent()
+            while parent is not None:
+                self._sync_folder_parent_check(parent)
+                parent = parent.parent()
+        finally:
+            self.folder_tree_w.blockSignals(False)
+            self._folder_check_updating = False
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            QApplication.processEvents()
+            self._apply_folder_selection()
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _apply_folder_selection(self) -> None:
         included: set[str] = set()
+
         def collect(it: QTreeWidgetItem) -> None:
             path = it.data(2, Qt.ItemDataRole.UserRole)
+            # Fully checked only — PartiallyChecked parents are covered by checked children.
             if path is not None and it.checkState(1) == Qt.CheckState.Checked:
                 included.add(str(path))
             for i in range(it.childCount()):
                 collect(it.child(i))
+
         for i in range(self.folder_tree_w.topLevelItemCount()):
             collect(self.folder_tree_w.topLevelItem(i))
 
-        if not included:
-            by_folder, _ = _build_folder_tree(self._all_rows)
-            included = set(by_folder)
         self._folder_includes = included
-        self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), included)
+        self.rows = filter_rows_by_folder_includes(self._get_ext_filtered_rows(), included)
+        self._update_folder_tree_title(len(self.rows))
         self._show_nomenclature()
 
     def _get_ext_filtered_rows(self) -> list:
@@ -1477,7 +1561,9 @@ class DampfGui(QMainWindow):
                 else:
                     w.setChecked(lbl.startswith(ext + " "))
         self._update_folder_tree_check_boxes()
-        self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), self._folder_includes)
+        self.rows = filter_rows_by_folder_includes(self._get_ext_filtered_rows(), self._folder_includes)
+        if self._folder_includes is not None:
+            self._update_folder_tree_title(len(self.rows))
         self._show_nomenclature()
 
     def _update_folder_tree_check_boxes(self) -> None:
@@ -1501,18 +1587,6 @@ class DampfGui(QMainWindow):
         finally:
             self.folder_tree_w.blockSignals(False)
         self._apply_folder_selection()
-
-    def _filter_rows_by_folders(self, rows: list, included: set[str]) -> list:
-        if not included:
-            return rows
-        out = []
-        for r in rows:
-            folder = str(Path(r.get("relpath", "")).parent).replace("\\", "/") if r.get("relpath") else ""
-            if folder == ".":
-                folder = ""
-            if any(folder == p or folder.startswith(p + "/") for p in included):
-                out.append(r)
-        return out
 
     def _suggest_exclude(self) -> None:
         exclude_keywords = ("results", "output", "processed", "statistical", "mean", "export", "out", "temp")
@@ -1701,8 +1775,8 @@ class DampfGui(QMainWindow):
                     dominant = ext_counts.most_common(1)[0][0] if ext_counts else ""
                     self._ext_filter = dominant if dominant else None
                     self._populate_ext_filter_buttons(ext_counts)
-                    self._folder_includes = set()
-                    self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), self._folder_includes)
+                    self._folder_includes = None  # until folder tree applies selection
+                    self.rows = filter_rows_by_folder_includes(self._get_ext_filtered_rows(), self._folder_includes)
                     n_shown = len(self.rows)
                     n_all = len(self._all_rows)
                     if dominant and n_shown != n_all:
@@ -2052,7 +2126,7 @@ class DampfGui(QMainWindow):
             return
         self.custom_token_map[str(tok)] = key
         _apply_custom_token_map(self._all_rows, self.custom_token_map)
-        self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), self._folder_includes)
+        self.rows = filter_rows_by_folder_includes(self._get_ext_filtered_rows(), self._folder_includes)
         self._show_nomenclature()
         self._refresh_unrecognized_panel()
         self.unrec_key_edit.clear()
@@ -2084,7 +2158,7 @@ class DampfGui(QMainWindow):
         for tok, key in batch:
             self.custom_token_map[str(tok)] = key
         _apply_custom_token_map(self._all_rows, self.custom_token_map)
-        self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), self._folder_includes)
+        self.rows = filter_rows_by_folder_includes(self._get_ext_filtered_rows(), self._folder_includes)
         self._show_nomenclature()
         self._refresh_unrecognized_panel()
         QMessageBox.information(self, "Map all suggested", f"Mapped {n} token(s).")
@@ -2104,7 +2178,7 @@ class DampfGui(QMainWindow):
                 for ttk in (row.get("_folder_token_to_key") or {}, row.get("_file_token_to_key") or {}):
                     if tok in ttk:
                         del ttk[tok]
-            self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), self._folder_includes)
+            self.rows = filter_rows_by_folder_includes(self._get_ext_filtered_rows(), self._folder_includes)
             self._show_nomenclature()
             self._refresh_unrecognized_panel()
 
@@ -2269,7 +2343,7 @@ class DampfGui(QMainWindow):
             loaded.append(f"{len(self.custom_token_map)} token mappings")
             if self._all_rows:
                 _apply_custom_token_map(self._all_rows, self.custom_token_map)
-                self.rows = self._filter_rows_by_folders(self._get_ext_filtered_rows(), self._folder_includes)
+                self.rows = filter_rows_by_folder_includes(self._get_ext_filtered_rows(), self._folder_includes)
                 self._show_nomenclature()
             self._refresh_unrecognized_panel()
         tp = schema.get("token_patterns")

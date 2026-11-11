@@ -138,7 +138,7 @@ Adjust in `app/dampf/filename_semantic_indexer.py`:
 
 ## GUI and standalone binary
 
-* **Start:** `uv run dampf`, or `python -m dampf.gui` (with `app` on `PYTHONPATH`, e.g. `set PYTHONPATH=app` before `python`), or `dist/DAMPF.exe` (Windows) / `dist/DAMPF` (Linux)
+* **Start:** `uv run dampf`, or `python -m dampf.gui` (with `app` on `PYTHONPATH`, e.g. `set PYTHONPATH=app` before `python`), or a release binary from [Releases](https://github.com/PiMaV/DAMPF/releases/latest) (`DAMPF-vX.Y.Z.exe` / `DAMPF-vX.Y.Z-linux-x86_64`)
 
 * **Workflow:**
   Root folder → Crawl → Adjust nomenclature → Save schema → **Save to DB** (primary) → optional **Export JSONL/CSV** to `_index` (or chosen output folder)
@@ -162,7 +162,7 @@ Adjust in `app/dampf/filename_semantic_indexer.py`:
   * Optional filtered view (“Outliers only”)
 
 * **Build binary:**
-  `uv run python scripts/build_exe.py` → `dist/DAMPF.exe` (Windows) or `dist/DAMPF` (Linux). Tag `v*` on GitHub also publishes `DAMPF-linux-x86_64`.
+  `uv run python scripts/build_exe.py` → local `dist/DAMPF.exe` (Windows) or `dist/DAMPF` (Linux). GitHub tag `v*` publishes `DAMPF-vX.Y.Z.exe` and `DAMPF-vX.Y.Z-linux-x86_64`.
 
 Outputs integrate directly with:
 

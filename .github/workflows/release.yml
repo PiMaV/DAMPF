@@ -25,11 +25,14 @@ jobs:
         run: |
           uv sync --extra dev
           uv run python scripts/build_exe.py
+          # Brand: CAPS + full tag; .exe already marks Windows (no -windows- in the name)
+          $ver = $env:GITHUB_REF_NAME.TrimStart('v')
+          Move-Item -Force dist/DAMPF.exe "dist/DAMPF-v${ver}.exe"
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/DAMPF.exe
+          files: dist/DAMPF-v*.exe
           generate_release_notes: true
 
   build-linux-binary:
@@ -61,11 +64,13 @@ jobs:
         run: |
           uv sync --extra dev
           uv run python scripts/build_exe.py
-          mv dist/DAMPF dist/DAMPF-linux-x86_64
-          chmod +x dist/DAMPF-linux-x86_64
+          # Brand: CAPS + full tag in the asset name
+          VER="${GITHUB_REF_NAME#v}"
+          mv dist/DAMPF "dist/DAMPF-v${VER}-linux-x86_64"
+          chmod +x "dist/DAMPF-v${VER}-linux-x86_64"
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/DAMPF-linux-x86_64
+          files: dist/DAMPF-v*-linux-x86_64
           generate_release_notes: true

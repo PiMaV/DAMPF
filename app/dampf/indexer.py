@@ -146,14 +146,18 @@ def tokenize_string(
         return []
     if norm_to_orig is None:
         norm_to_orig = {}
-    # Normalize decimal dot to p (e.g. 4.2kv -> 4p2kv) before split, since . is a delimiter
+    # Normalize decimal dot to p (e.g. 4.2kv -> 4p2kv) before split, since . is a delimiter.
+    # Parameter split is '_' and path punctuation. '-' stays inside one name (plasma-on, 2024-02-07).
     s = re.sub(r"(\d)\.(\d)", r"\1p\2", s)
-    s = re.sub(r"[\/\\\-\_\.\+\(\)\[\]\{\},;]+", " ", s)
+    s = re.sub(r"[\/\\_\.\+\(\)\[\]\{\},;]+", " ", s)
     raw = [p for p in s.split() if p]
     out: List[str] = []
     for p in raw:
         pl = p.replace("µ", "u").lower()
-        if RE_NUMBER_UNIT.match(pl):
+        if "-" in pl:
+            out.append(pl)
+            norm_to_orig.setdefault(pl, p)
+        elif RE_NUMBER_UNIT.match(pl):
             out.append(pl)
             norm_to_orig.setdefault(pl, p)
         elif RE_PARAM_TOKEN.match(pl):
@@ -317,6 +321,67 @@ def _apply_user_pattern(
     except (ValueError, IndexError, KeyError):
         return None, None
     return None, None
+
+
+def _hyphen_binds_name(tok: str) -> bool:
+    """True when '-' joins a label to the rest of one name, not a minus or an exponent."""
+    if "-" not in tok:
+        return False
+    body = tok[1:] if tok.startswith("-") else tok
+    body = re.sub(r"e-\d+", "", body, flags=re.IGNORECASE)
+    return "-" in body
+
+
+def _quantitative_from_piece(piece: str) -> Optional[Tuple[str, Any, str]]:
+    """Number+unit, slm, or gas% in one hyphen segment. Not a new parameter name."""
+    m = RE_EXPOSURE.match(piece)
+    if m:
+        val = parse_number(m.group("val"))
+        if val is not None:
+            unit = m.group("unit").replace("µ", "u")
+            return "exposure", {"val": val, "unit": unit}, "exposure"
+    m = RE_TEMP.match(piece)
+    if m:
+        val = parse_number(m.group("val"))
+        unit = m.group("unit").replace("°", "").lower()
+        if val is not None:
+            return "temp", {"val": val, "unit": unit}, "temp"
+    m = RE_FREQ.match(piece)
+    if m:
+        val = parse_number(m.group("val"))
+        if val is not None:
+            return "freq", {"val": val, "unit": m.group("unit").lower()}, "freq"
+    m = RE_VOLT.match(piece)
+    if m:
+        val = parse_number(m.group("val"))
+        if val is not None:
+            return "voltage", {"val": val, "unit": m.group("unit").lower()}, "volt"
+    m = RE_CURR.match(piece)
+    if m:
+        val = parse_number(m.group("val"))
+        if val is not None:
+            return "current", {"val": val, "unit": m.group("unit").lower()}, "curr"
+    m = RE_LEN.match(piece)
+    if m and any(ch.isdigit() for ch in piece):
+        val = parse_number(m.group("val"))
+        unit = m.group("unit").replace("µ", "u")
+        if val is not None:
+            entry = {"val": val, "unit": unit, "SI_m": (val * unit_scale(unit)) if unit != "px" else None}
+            return "lengths", entry, "lengths"
+    m = RE_SLM_FLOW.match(piece)
+    if m:
+        val = parse_number(m.group(1))
+        if val is not None:
+            return "gas_flow", {"val": val, "unit": "slm", "gas": m.group(2)}, "gas_flow"
+    m = RE_NUM_LETTERS.match(piece)
+    if m:
+        num_part, letters = m.group(1), m.group(2).lower()
+        val = parse_number(num_part)
+        if val is not None:
+            if letters in GAS_KEYS:
+                return letters, {"val": int(val) if val == int(val) else val, "unit": "%"}, "gas_pct"
+            return letters, int(val) if val == int(val) else val, "num_letters"
+    return None
 
 
 def parse_tokens(
@@ -500,7 +565,7 @@ def parse_tokens(
                 data["processing"].append(tok)
             continue
         m = RE_EXPOSURE.match(tok)
-        if m:
+        if m and not _hyphen_binds_name(tok):
             val = parse_number(m.group("val"))
             unit = m.group("unit").replace("µ", "u")
             if val is not None:
@@ -508,35 +573,35 @@ def parse_tokens(
                 set_field("exposure", {"val": val, "unit": unit}, "exposure", tok)
             continue
         m = RE_TEMP.match(tok)
-        if m:
+        if m and not _hyphen_binds_name(tok):
             val = parse_number(m.group("val"))
             unit = m.group("unit").replace("°", "").lower()
             if val is not None:
                 set_field("temp", {"val": val, "unit": unit}, "temp", tok)
             continue
         m = RE_FREQ.match(tok)
-        if m:
+        if m and not _hyphen_binds_name(tok):
             val = parse_number(m.group("val"))
             unit = m.group("unit").lower()
             if val is not None:
                 set_field("freq", {"val": val, "unit": unit}, "freq", tok)
             continue
         m = RE_VOLT.match(tok)
-        if m:
+        if m and not _hyphen_binds_name(tok):
             val = parse_number(m.group("val"))
             unit = m.group("unit").lower()
             if val is not None:
                 set_field("voltage", {"val": val, "unit": unit}, "volt", tok)
             continue
         m = RE_CURR.match(tok)
-        if m:
+        if m and not _hyphen_binds_name(tok):
             val = parse_number(m.group("val"))
             unit = m.group("unit").lower()
             if val is not None:
                 set_field("current", {"val": val, "unit": unit}, "curr", tok)
             continue
         m = RE_LEN.match(tok)
-        if m and any(ch.isdigit() for ch in tok):
+        if m and any(ch.isdigit() for ch in tok) and not _hyphen_binds_name(tok):
             val = parse_number(m.group("val"))
             unit = m.group("unit").replace("µ", "u")
             if val is not None:
@@ -550,7 +615,7 @@ def parse_tokens(
                     data["lengths"].append(entry)
             continue
         m = RE_NUM_LETTERS.match(tok)
-        if m:
+        if m and not _hyphen_binds_name(tok):
             num_part, letters = m.group(1), m.group(2).lower()
             val = parse_number(num_part)
             if val is not None:
@@ -560,12 +625,32 @@ def parse_tokens(
                     set_field(letters, int(val) if val == int(val) else val, "num_letters", tok)
             continue
         m = RE_SLM_FLOW.match(tok)
-        if m:
+        if m and not _hyphen_binds_name(tok):
             val = parse_number(m.group(1))
             gas = m.group(2)  # preserve case (Ar, N2)
             if val is not None:
                 set_field("gas_flow", {"val": val, "unit": "slm", "gas": gas}, "gas_flow", tok)
             continue
+        # '-' binds one name. Read a number+unit inside it; do not promote the words to keys.
+        if "-" in tok:
+            hits = [h for h in (_quantitative_from_piece(p) for p in tok.split("-") if p) if h]
+            if hits:
+                linked = False
+                for key, val, why in hits:
+                    if key == "lengths":
+                        if "lengths" not in data:
+                            data["lengths"] = [val]
+                            trace.append("lengths:len")
+                        elif isinstance(data.get("lengths"), list):
+                            data["lengths"].append(val)
+                    elif key not in data:
+                        data[key] = val
+                        trace.append(f"{key}:{why}")
+                    if not linked:
+                        token_to_key[tok] = key
+                        recognized += 1
+                        linked = True
+                continue
         if RE_LETTERS_ONLY_TOKEN.match(tok) and tok not in modality_map and tok not in PROC_TAGS and tok not in data:
             set_field(tok, tok, "letters_param", tok)
             continue

@@ -8,7 +8,7 @@ Konvention fuer Pfade und Dateinamen; der **DAMPF-Indexer** ([../../app/dampf/in
 
 ## Quick Start (4 Regeln)
 
-1. **Trenner:** `_` (underscore) oder `-` (dash), nie Leerzeichen
+1. **Trenner:** `_` (underscore) oder ein neuer Ordner trennt Parameter. `-` (dash) bleibt im Namen (`plasma-on`, `Slit-0p5mm`). Nie Leerzeichen.
 2. **Einheit direkt an Zahl binden** (kein Leerzeichen): `4kV`, `10us`, `0p2us`
 3. **Dezimal:** `p` bevorzugt (0p2us), Punkt `.` wird ebenfalls unterstuetzt (0.2us)
 4. **Beispiel:** `2024-02-07_run1_4kV_10us_001.png` → Datum, Run, Spannung, Exposure, Frame
@@ -32,6 +32,9 @@ Konvention fuer Pfade und Dateinamen; der **DAMPF-Indexer** ([../../app/dampf/in
 | Einheit an Zahl      | direkt, ohne Leerzeichen | 4kV, 10us, 0p2us |
 | Decimal Point        | p bevorzugt, . unterstuetzt | 0p2us oder 0.2us   |
 | INNER Separation (Trennung innerhalb eines Namens) | - (dash / minus) | 2020-06-21 or Slit-0p5mm |
+| Explizite Spalte | = | plasma=on, target=metal-grounded |
+
+Der Indexer haelt sich daran: `_` und der Pfad starten einen neuen Parameter, `-` nicht. Ein Bindestrich-Token bleibt ein Token. Eine Zahl+Einheit darin wird gelesen (`Slit-0p5mm`, `150us-Exposure`); die Woerter daneben werden keine eigenen Schluessel (`plasma-on`). `=` setzt den Spaltennamen. Der Schluessel ist ein Wort aus Buchstaben und Ziffern (max. 17 Zeichen). Der Wert darf `-` enthalten (`target=metal-grounded`).
 
 ---
 
@@ -45,6 +48,7 @@ Du kannst Parameter **implizit** (kurz) oder **explizit** (eindeutig) schreiben:
 | **Explizit** | `voltage=4kV_exposure=10us_frame=001.png` | Du benennst jeden Wert direkt |
 
 **Wann explizit?**
+- Text ohne Einheit, wenn der Spaltenname feststehen soll: `plasma=on`, `target=glass`, `target=metal-grounded`. `plasma-on` allein ist nur ein Name, keine Spalte.
 - Eigene Parameter: `sample=ABC123`, `operator=john`, `batch=7`
 - Eindeutigkeit: `temp=22p5` statt nur `22p5` (keine Verwechslung mit Strom)
 - Wenn implizite Erkennung nicht greift
@@ -79,9 +83,10 @@ Beides funktioniert; explizit ist immer eindeutig, implizit ist kuerzer.
 | Zahl+Buchstabe(n) (Parameter) | 300He, 300N2 | Zahl + 1–3 Zeichen → key=value; He/N2/CO2 = Gasanteil in % |
 | Durchfluss (slm) | 5slmAr, 10slmN2 | gas_flow (val, unit=slm, gas) |
 | Nur Buchstaben (2–4 Zeichen) | FF, KPSc | String-Parameter key=value (z.B. ff=ff) |
+| Bindestrich im Namen | plasma-on, Slit-0p5mm, 150us-Exposure | ein Token; Zahl+Einheit darin wird gelesen; Woerter daneben sind keine Schluessel |
 | Laufnummer / Frame (nur Ziffern) | 000, 001, 040, 165, 07 | frame (als Integer; nackte Ziffern am Dateiende) |
 | Kamera/Channel | cam1, channel2, C1, C2, C3 | camera, channel |
-| key=value | beliebig | als Key-Value gespeichert |
+| key=value | plasma=on, target=metal-grounded | Schluessel = Spaltenname, Rest = Wert (darf `-` enthalten) |
 | Processing-Tags | raw, dark, flat, avg, … | processing (Liste) |
 | Modality | rgb, ir, thermal, … | modality (ueber MODALITY_MAP) |
 

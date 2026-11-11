@@ -1,6 +1,7 @@
 """Build DAMPF GUI as a standalone binary using PyInstaller.
 
-Windows: dist/DAMPF.exe. Linux: dist/DAMPF.
+Local output: dist/DAMPF.exe (Windows) or dist/DAMPF (Linux).
+GitHub Releases rename to DAMPF-vX.Y.Z.exe / DAMPF-vX.Y.Z-linux-x86_64.
 Run from repo root with: uv run python scripts/build_exe.py
 """
 from __future__ import annotations

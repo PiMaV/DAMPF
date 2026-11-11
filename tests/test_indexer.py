@@ -411,3 +411,52 @@ def test_apply_majority_frame_logic():
     assert rows[1].get("frame") == 101
     assert rows[2].get("frame") == 18 and rows[2].get("seq") is None
     assert rows[2]["_file_token_to_key"]["18"] == "frame"
+
+
+def test_underscore_splits_hyphen_stays_in_name():
+    """'_' separates parameters. '-' stays inside one name."""
+    assert tokenize_string("Plasma_ON") == ["plasma", "on"]
+    assert tokenize_string("plasma-on") == ["plasma-on"]
+    assert tokenize_string("with-target") == ["with-target"]
+    assert tokenize_string("metal-grounded") == ["metal-grounded"]
+    assert tokenize_string("noisy-and-dark-environment") == ["noisy-and-dark-environment"]
+    assert tokenize_string("c-set_001") == ["c-set", "001"]
+    assert tokenize_string("Slit-0p5mm") == ["slit-0p5mm"]
+    assert tokenize_string("150us-Exposure_4kV") == ["150us-exposure", "4kv"]
+    assert tokenize_string("target=metal-grounded") == ["target=metal-grounded"]
+    assert tokenize_string("2024-02-07_run1_4kV_10us_001") == [
+        "2024-02-07", "run1", "4kv", "10us", "001",
+    ]
+
+
+def test_hyphenated_name_is_not_extra_keys():
+    plain = parse_tokens(tokenize_string("plasma-on"))
+    assert plain.data == {}
+    words = parse_tokens(tokenize_string("noisy-and-dark-environment"))
+    assert words.data == {}
+    old = parse_tokens(tokenize_string("Plasma_ON"))
+    assert old.data.get("on") == "on"
+
+    slit = parse_tokens(tokenize_string("Slit-0p5mm"))
+    assert slit.data["lengths"][0]["val"] == 0.5
+    assert slit.data["lengths"][0]["unit"] == "mm"
+    assert "slit" not in slit.data
+
+    labeled = parse_tokens(tokenize_string("150us-Exposure"))
+    assert labeled.data["exposure"] == {"val": 150.0, "unit": "us"}
+    assert list(labeled.data) == ["exposure"]
+
+    temp = parse_tokens(tokenize_string("Temp-22p5C"))
+    assert temp.data["temp"]["val"] == 22.5
+    assert temp.data["temp"]["unit"] == "c"
+
+    kv = parse_tokens(tokenize_string("plasma=on_target=metal-grounded"))
+    assert kv.data["plasma"] == "on"
+    assert kv.data["target"] == "metal-grounded"
+
+    canonical = parse_tokens(tokenize_string("2024-02-07_run1_4kV_10us_001"))
+    assert canonical.data["date"] == "2024-02-07"
+    assert canonical.data["run"] == 1
+    assert canonical.data["voltage"] == {"val": 4.0, "unit": "kv"}
+    assert canonical.data["exposure"] == {"val": 10.0, "unit": "us"}
+    assert canonical.data["frame"] == 1
